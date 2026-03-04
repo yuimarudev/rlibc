@@ -1035,6 +1035,21 @@ fn quality_gate_script_usage_mentions_duplicate_profile_rejection_for_both_forms
 }
 
 #[test]
+fn quality_gate_script_usage_mentions_duplicate_profile_rejection_once() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let occurrence_count = script
+    .matches(
+      "duplicate --profile is rejected for both --profile <value> and --profile=<value> forms",
+    )
+    .count();
+
+  assert_eq!(
+    occurrence_count, 1,
+    "usage/profile duplicate-profile rejection text must appear exactly once to avoid duplicate guidance drift"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_lists_duplicate_profile_rejection_between_profile_and_continue_sections()
  {
   let script = read_repository_file("scripts/quality-gate.sh");
@@ -1834,6 +1849,23 @@ fn command_uses_supported_runtest_prefix_rejects_shell_suffixes_for_bin_runtest_
     assert!(
       !command_uses_supported_runtest_prefix(command),
       "bin-runtest variant with shell suffix must be rejected by manifest contract helper: {command}"
+    );
+  }
+}
+
+#[test]
+fn command_uses_supported_runtest_prefix_rejects_operator_suffixes_for_bin_runtest_prefixes() {
+  for command in [
+    "bin/runtest -w functional/argv && echo unexpected",
+    "bin/runtest -w functional/argv | cat",
+    "bin/runtest -w functional/argv > /tmp/rlibc-i060-bin-runtest-out",
+    "./bin/runtest -w functional/argv && echo unexpected",
+    "./bin/runtest -w functional/argv | cat",
+    "./bin/runtest -w functional/argv > /tmp/rlibc-i060-dot-bin-runtest-out",
+  ] {
+    assert!(
+      !command_uses_supported_runtest_prefix(command),
+      "bin-runtest operator suffix must be rejected by manifest contract helper: {command}"
     );
   }
 }

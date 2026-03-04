@@ -181,6 +181,39 @@ fn getnameinfo_rejects_unknown_flags_for_service_only_name_required_request() {
 }
 
 #[test]
+fn getnameinfo_rejects_unknown_flags_for_service_only_name_required_numerichost_request() {
+  let address = sockaddr_in {
+    sin_family: af_inet_family(),
+    sin_port: 53_u16.to_be(),
+    sin_addr: in_addr {
+      s_addr: u32::from_be_bytes([127, 0, 0, 1]),
+    },
+    sin_zero: [0; 8],
+  };
+  let mut service = [0x58_i8; 32];
+
+  // SAFETY: service output is requested/writable; unsupported flags must be
+  // rejected before service-only handling even when NI_NUMERICHOST is present.
+  let status = unsafe {
+    getnameinfo(
+      (&raw const address).cast::<sockaddr>(),
+      slen(size_of::<sockaddr_in>()),
+      core::ptr::null_mut(),
+      slen(0),
+      service.as_mut_ptr(),
+      slen(service.len()),
+      NI_NAMEREQD | NI_NUMERICHOST | 0x4000,
+    )
+  };
+
+  assert_eq!(status, EAI_BADFLAGS);
+  assert!(
+    service.iter().all(|&byte| byte == 0x58_i8),
+    "service output must remain untouched on early EAI_BADFLAGS",
+  );
+}
+
+#[test]
 fn getnameinfo_rejects_unknown_flags_for_service_only_short_addrlen_request() {
   let address = sockaddr_in {
     sin_family: af_inet_family(),

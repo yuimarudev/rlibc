@@ -3691,6 +3691,61 @@ fn mbrtowc_rejects_state_with_nonzero_reserved_bytes() {
 }
 
 #[test]
+fn mbrtowc_rejects_state_with_nonzero_reserved_bytes_then_retries_same_input() {
+  let input = [b'A'];
+  let output_sentinel: wchar_t = -1;
+  let mut output = output_sentinel;
+  let mut state = mbstate_t::new();
+
+  // SAFETY: `mbstate_t` layout is fixed by ABI contract and verified in this
+  // test module (`size_of::<mbstate_t>() == 8`).
+  let raw_state = unsafe {
+    core::slice::from_raw_parts_mut((&raw mut state).cast::<u8>(), size_of::<mbstate_t>())
+  };
+
+  // Corrupted state: canonical initial lengths with non-zero reserved payload.
+  raw_state[4] = 0;
+  raw_state[5] = 0;
+  raw_state[6] = 1;
+
+  set_errno(0);
+
+  // SAFETY: pointers are valid and input is readable for one byte.
+  let first = unsafe {
+    mbrtowc(
+      &raw mut output,
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, MBR_ERR_INVALID);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(output, output_sentinel);
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+
+  set_errno(ERRNO_SENTINEL);
+
+  // SAFETY: pointers are valid and input is readable for one byte.
+  let retried = unsafe {
+    mbrtowc(
+      &raw mut output,
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(retried, sz(1));
+  assert_eq!(output, wchar_t::from(b'A'));
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+  assert_eq!(errno_value(), ERRNO_SENTINEL);
+}
+
+#[test]
 fn mbrtowc_rejects_state_with_nonzero_second_reserved_byte() {
   let input = [b'A'];
   let output_sentinel: wchar_t = -1;
@@ -4001,6 +4056,55 @@ fn mbrlen_rejects_state_with_nonzero_reserved_bytes() {
   assert_eq!(errno_value(), EILSEQ);
   // SAFETY: state pointer is valid.
   assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+}
+
+#[test]
+fn mbrlen_rejects_state_with_nonzero_reserved_bytes_then_retries_same_input() {
+  let input = [b'A'];
+  let mut state = mbstate_t::new();
+
+  // SAFETY: `mbstate_t` layout is fixed by ABI contract and verified in this
+  // test module (`size_of::<mbstate_t>() == 8`).
+  let raw_state = unsafe {
+    core::slice::from_raw_parts_mut((&raw mut state).cast::<u8>(), size_of::<mbstate_t>())
+  };
+
+  // Corrupted state: canonical initial lengths with non-zero reserved payload.
+  raw_state[4] = 0;
+  raw_state[5] = 0;
+  raw_state[6] = 1;
+
+  set_errno(0);
+
+  // SAFETY: pointers are valid and input is readable for one byte.
+  let first = unsafe {
+    mbrlen(
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, MBR_ERR_INVALID);
+  assert_eq!(errno_value(), EILSEQ);
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+
+  set_errno(ERRNO_SENTINEL);
+
+  // SAFETY: pointers are valid and input is readable for one byte.
+  let retried = unsafe {
+    mbrlen(
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(retried, sz(1));
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+  assert_eq!(errno_value(), ERRNO_SENTINEL);
 }
 
 #[test]

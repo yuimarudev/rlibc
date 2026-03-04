@@ -378,11 +378,7 @@ fn nocheck_fallback_pattern(pattern: &[u8], flags: c_int) -> Vec<u8> {
     end -= 1;
   }
 
-  let trimmed = if end == 0 {
-    pattern
-  } else {
-    &pattern[..end]
-  };
+  let trimmed = if end == 0 { pattern } else { &pattern[..end] };
   let mut normalized = trimmed.to_vec();
 
   if normalized.starts_with(b"//")

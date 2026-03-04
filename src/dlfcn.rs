@@ -10,8 +10,9 @@
 //! handle as closed but does not attempt to unmap code/data in this phase.
 
 use crate::abi::errno::{
-  EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST, EINTR,
-  EINVAL, EISDIR, ENETUNREACH, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE, ETIMEDOUT,
+  EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST,
+  EHOSTUNREACH, EINTR, EINVAL, EISDIR, ENETUNREACH, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE,
+  ETIMEDOUT,
 };
 use crate::abi::types::{c_char, c_int, c_void};
 use crate::errno::{__errno_location, set_errno};
@@ -450,6 +451,7 @@ const fn io_error_kind_errno(error_kind: io::ErrorKind) -> Option<c_int> {
     io::ErrorKind::AddrInUse => Some(EADDRINUSE),
     io::ErrorKind::AddrNotAvailable => Some(EADDRNOTAVAIL),
     io::ErrorKind::NetworkUnreachable => Some(ENETUNREACH),
+    io::ErrorKind::HostUnreachable => Some(EHOSTUNREACH),
     io::ErrorKind::PermissionDenied => Some(EACCES),
     io::ErrorKind::InvalidInput => Some(EINVAL),
     io::ErrorKind::Interrupted => Some(EINTR),
@@ -954,6 +956,20 @@ mod tests {
       message,
       "rlibc: requested symbol was not found: dup_symbol: host loader unresolved entry",
     );
+  }
+
+  #[test]
+  fn set_dlsym_missing_symbol_message_omits_detail_after_full_symbol_prefix_chain_collapse() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup_symbol".as_ptr(),
+      Some("dup_symbol: dup_symbol: dup_symbol"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(message, "rlibc: requested symbol was not found: dup_symbol");
   }
 
   #[test]
@@ -1519,6 +1535,26 @@ mod tests {
   }
 
   #[test]
+  fn close_final_reference_cleans_trackable_zero_closed_entry_and_marks_closed() {
+    let mut registry = DlHandleRegistry::new();
+    let tracked_handle = registry.allocate_test_handle(1);
+
+    registry
+      .handles
+      .insert(TRACKABLE_NULL_HANDLE_ID, DlHandleState::Closed);
+
+    assert_eq!(
+      registry.close_handle(tracked_handle as usize),
+      super::CloseOutcome::Success
+    );
+    assert_eq!(registry.handle_state(TRACKABLE_NULL_HANDLE_ID), None);
+    assert_eq!(
+      registry.handle_state(tracked_handle as usize),
+      Some(DlHandleState::Closed)
+    );
+  }
+
+  #[test]
   fn close_handle_rejects_trackable_zero_entry_as_invalid_and_cleans_state() {
     let mut registry = DlHandleRegistry::new();
 
@@ -1954,6 +1990,16 @@ mod tests {
     assert_eq!(
       io_error_errno(&error, ENOENT),
       crate::abi::errno::ENETUNREACH
+    );
+  }
+
+  #[test]
+  fn io_error_errno_maps_host_unreachable_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::HostUnreachable, "host unreachable");
+
+    assert_eq!(
+      io_error_errno(&error, ENOENT),
+      crate::abi::errno::EHOSTUNREACH
     );
   }
 

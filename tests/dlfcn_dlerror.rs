@@ -1513,9 +1513,18 @@ fn dlerror_reports_dlopen_missing_path_failure() {
   let missing_path = c_string("/definitely/missing/rlibc_i055_dlopen_missing_path.so");
   // SAFETY: `missing_path` is a valid NUL-terminated C string.
   let handle = unsafe { dlopen(missing_path.as_ptr().cast::<c_char>(), RTLD_NOW) };
-  let message = take_dlerror_message().expect("missing path failure should set dlerror message");
 
   assert!(handle.is_null(), "missing path must fail");
+
+  let failure_errno = read_errno();
+
+  assert_ne!(
+    failure_errno, 0,
+    "missing-path dlopen failure should set a non-zero errno",
+  );
+
+  let message = take_dlerror_message().expect("missing path failure should set dlerror message");
+
   assert!(
     message.contains("target path could not be opened"),
     "unexpected dlerror message: {message}",
@@ -1524,9 +1533,19 @@ fn dlerror_reports_dlopen_missing_path_failure() {
     message.contains("rlibc_i055_dlopen_missing_path.so"),
     "missing-path dlerror should include path detail text: {message}",
   );
+  assert_eq!(
+    read_errno(),
+    failure_errno,
+    "reading dlerror must preserve errno after missing-path dlopen failure",
+  );
   assert!(
     take_dlerror_message().is_none(),
     "second dlerror call must clear pending state",
+  );
+  assert_eq!(
+    read_errno(),
+    failure_errno,
+    "clearing dlerror must preserve errno after missing-path dlopen failure",
   );
 }
 

@@ -746,6 +746,32 @@ fn decode_utf8_rejects_state_with_nonzero_reserved_bytes() {
 }
 
 #[test]
+fn decode_utf8_rejects_state_with_nonzero_reserved_bytes_then_retries_same_input() {
+  let mut state = mbstate_t::new();
+
+  // bytes=[0xE3, 0, 0, 0], pending_len=1, expected_len=3, reserved[0]=1.
+  // Non-zero reserved bytes are treated as corrupted snapshots.
+  write_state_bytes(&mut state, [0xE3, 0x00, 0x00, 0x00, 0x01, 0x03, 0x01, 0x00]);
+
+  let input = [b'A', b'B'];
+  let first = decode_utf8(&mut state, &input);
+
+  assert_eq!(first, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+
+  let retried = decode_utf8(&mut state, &input);
+
+  assert_eq!(
+    retried,
+    Utf8DecodeResult::Complete {
+      code_point: u32::from(b'A'),
+      consumed: 1,
+    },
+  );
+  assert!(state.is_initial());
+}
+
+#[test]
 fn decode_utf8_rejects_state_with_nonzero_second_reserved_byte() {
   let mut state = mbstate_t::new();
 

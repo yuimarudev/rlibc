@@ -1,9 +1,9 @@
-#ifndef RLIBC_SETJMP_H
-#define RLIBC_SETJMP_H
-
 #ifdef RLIBC_NORETURN
 #undef RLIBC_NORETURN
 #endif
+
+#ifndef RLIBC_SETJMP_H
+#define RLIBC_SETJMP_H
 
 #if defined(__cplusplus) && __cplusplus >= 201103L
 #define RLIBC_NORETURN [[noreturn]]

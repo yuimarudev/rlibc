@@ -82,7 +82,6 @@ fn c_float_and_c_double_preserve_nan_payload_bits() {
   let float_nan_bits: u32 = 0x7fc0_1234;
   let float_nan: c_float = f32::from_bits(float_nan_bits);
   let float_round_trip: f32 = float_nan;
-
   let double_nan_bits: u64 = 0x7ff8_0000_0000_1234;
   let double_nan: c_double = f64::from_bits(double_nan_bits);
   let double_round_trip: f64 = double_nan;
