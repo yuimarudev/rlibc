@@ -1,0 +1,14 @@
+[package]
+name = "codestyle-fmt"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "codestyle_fmt"
+path = "src/main.rs"
+
+[dependencies]
+codestyle-lib = { workspace = true }
+
+[lints]
+workspace = true
