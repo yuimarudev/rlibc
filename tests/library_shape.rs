@@ -878,6 +878,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     0,
     "project_name_cstr_len() should point to the trailing NUL byte index"
   );
+  assert_ne!(
+    c_name_bytes[rlibc::project_name_cstr_len() - 1],
+    0,
+    "byte before trailing NUL should belong to project_name payload"
+  );
   assert_eq!(
     c_name.to_bytes_with_nul().len(),
     c_name.to_bytes().len() + 1,

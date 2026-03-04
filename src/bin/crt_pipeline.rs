@@ -590,6 +590,21 @@ mod tests {
   }
 
   #[test]
+  fn parse_args_rejects_three_bare_positional_arguments_without_summary_suffix() {
+    let error = parse_args(&[
+      "first".to_string(),
+      "second".to_string(),
+      "third".to_string(),
+    ])
+    .expect_err("three bare positional arguments must fail without summary suffix");
+
+    assert_eq!(
+      error,
+      "unexpected positional arguments: first, second, third"
+    );
+  }
+
+  #[test]
   fn parse_args_summarizes_many_bare_positional_arguments() {
     let error = parse_args(&[
       "first".to_string(),
@@ -631,6 +646,22 @@ mod tests {
       .expect_err("multiple trailing positionals after double dash must fail");
 
     assert_eq!(error, "unexpected positional arguments: extra, more");
+  }
+
+  #[test]
+  fn parse_args_rejects_three_trailing_positionals_after_double_dash_without_summary_suffix() {
+    let error = parse_args(&[
+      "--".to_string(),
+      "extra".to_string(),
+      "more".to_string(),
+      "overflow".to_string(),
+    ])
+    .expect_err("three trailing positionals after double dash must fail without summary suffix");
+
+    assert_eq!(
+      error,
+      "unexpected positional arguments: extra, more, overflow"
+    );
   }
 
   #[test]

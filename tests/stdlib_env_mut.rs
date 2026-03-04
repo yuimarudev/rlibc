@@ -982,6 +982,43 @@ fn setenv_null_value_no_overwrite_preserves_putenv_alias_and_sets_errno() {
 }
 
 #[test]
+fn setenv_null_value_i016_overwrite_preserves_rebound_empty_putenv_alias_and_sets_errno() {
+  let _env = EnvScope::new();
+  let tracked_name = c_string("RLIBC_I016_SETENV_NULL_VALUE_OVERWRITE_REBOUND_EMPTY_ALIAS");
+  let prefix = b"RLIBC_I016_SETENV_NULL_VALUE_OVERWRITE_REBOUND_EMPTY_ALIAS=";
+  let mut first = b"RLIBC_I016_SETENV_NULL_VALUE_OVERWRITE_REBOUND_EMPTY_ALIAS=alpha\0".to_vec();
+  let mut second = b"RLIBC_I016_SETENV_NULL_VALUE_OVERWRITE_REBOUND_EMPTY_ALIAS=\0\0".to_vec();
+
+  write_errno(16);
+
+  // SAFETY: `first` is mutable and NUL-terminated for C.
+  let first_put_result = unsafe { putenv(first.as_mut_ptr().cast()) };
+  // SAFETY: `second` is mutable and NUL-terminated for C.
+  let second_put_result = unsafe { putenv(second.as_mut_ptr().cast()) };
+
+  assert_eq!(first_put_result, 0);
+  assert_eq!(second_put_result, 0);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  // SAFETY: null value pointer is passed intentionally to validate EINVAL path.
+  let set_result = unsafe { setenv(tracked_name.as_ptr(), core::ptr::null(), 1) };
+
+  assert_eq!(set_result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  let value_start = prefix.len();
+
+  first[value_start..value_start + 5].copy_from_slice(b"omega");
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  second[value_start] = b'z';
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(b"z".to_vec()));
+}
+
+#[test]
 fn setenv_null_name_preserves_putenv_alias_and_sets_errno() {
   let _env = EnvScope::new();
   let tracked_name = c_string("RLIBC_I017_SETENV_NULL_NAME_ALIAS");
@@ -1310,6 +1347,23 @@ fn putenv_without_equal_unsets_variable_and_preserves_errno() {
   tracked_entry[value_start..value_start + 5].copy_from_slice(b"omega");
 
   assert_eq!(getenv_bytes(&tracked_name), None);
+}
+
+#[test]
+fn putenv_without_equal_missing_name_preserves_errno_and_keeps_absent() {
+  let _env = EnvScope::new();
+  let missing_name = c_string("RLIBC_I017_PUTENV_UNSET_MISSING");
+  let mut unset_entry = b"RLIBC_I017_PUTENV_UNSET_MISSING\0".to_vec();
+
+  assert_eq!(getenv_bytes(&missing_name), None);
+  write_errno(45);
+
+  // SAFETY: `unset_entry` is mutable and NUL-terminated for C.
+  let unset_result = unsafe { putenv(unset_entry.as_mut_ptr().cast()) };
+
+  assert_eq!(unset_result, 0);
+  assert_eq!(read_errno(), 45);
+  assert_eq!(getenv_bytes(&missing_name), None);
 }
 
 #[test]

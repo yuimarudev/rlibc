@@ -299,6 +299,21 @@ fn crt_pipeline_rejects_multiple_bare_positional_arguments() {
 }
 
 #[test]
+fn crt_pipeline_rejects_three_bare_positional_arguments_without_summary_suffix() {
+  let args = vec![
+    "first".to_string(),
+    "second".to_string(),
+    "third".to_string(),
+  ];
+  let output = run_pipeline(&args);
+
+  assert_pipeline_failure_contains(
+    &output,
+    "unexpected positional arguments: first, second, third",
+  );
+}
+
+#[test]
 fn crt_pipeline_summarizes_many_bare_positional_arguments() {
   let args = vec![
     "first".to_string(),
@@ -650,6 +665,22 @@ fn crt_pipeline_rejects_multiple_trailing_positionals_after_double_dash() {
   let output = run_pipeline(&args);
 
   assert_pipeline_failure_contains(&output, "unexpected positional arguments: extra, more");
+}
+
+#[test]
+fn crt_pipeline_rejects_three_trailing_positionals_after_double_dash_without_summary_suffix() {
+  let args = vec![
+    "--".to_string(),
+    "extra".to_string(),
+    "more".to_string(),
+    "overflow".to_string(),
+  ];
+  let output = run_pipeline(&args);
+
+  assert_pipeline_failure_contains(
+    &output,
+    "unexpected positional arguments: extra, more, overflow",
+  );
 }
 
 #[test]

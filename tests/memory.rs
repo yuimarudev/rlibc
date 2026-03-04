@@ -1085,6 +1085,67 @@ fn memmove_non_overlapping_distinct_size_non_byte_buffers_match_copy_from_slice(
 }
 
 #[test]
+fn memmove_non_overlapping_u16_to_u128_buffers_match_copy_from_slice_for_all_ranges() {
+  let source = [
+    0x1020_u16, 0x3040, 0x5060, 0x7080, 0x90a0, 0xb0c0, 0xd0e0, 0xf001,
+  ];
+  let source_before = source;
+  let initial_destination = [
+    0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f_u128,
+    0x1011_1213_1415_1617_1819_1a1b_1c1d_1e1f,
+  ];
+  let source_total_bytes = core::mem::size_of_val(&source);
+  let destination_total_bytes = core::mem::size_of_val(&initial_destination);
+
+  for source_offset in 0..=source_total_bytes {
+    for destination_offset in 0..=destination_total_bytes {
+      let max_copy_len = core::cmp::min(
+        source_total_bytes - source_offset,
+        destination_total_bytes - destination_offset,
+      );
+
+      for copy_len in 0..=max_copy_len {
+        let mut actual_destination = initial_destination;
+        let mut expected_destination = initial_destination;
+
+        // SAFETY: arrays are live and range checks above ensure in-bounds slices.
+        unsafe {
+          let source_bytes =
+            core::slice::from_raw_parts(source.as_ptr().cast::<u8>().add(source_offset), copy_len);
+          let expected_destination_bytes = core::slice::from_raw_parts_mut(
+            expected_destination
+              .as_mut_ptr()
+              .cast::<u8>()
+              .add(destination_offset),
+            copy_len,
+          );
+          expected_destination_bytes.copy_from_slice(source_bytes);
+        }
+
+        let destination = actual_destination
+          .as_mut_ptr()
+          .cast::<u8>()
+          .wrapping_add(destination_offset);
+        let source_ptr = source.as_ptr().cast::<u8>().wrapping_add(source_offset);
+        // SAFETY: pointers are derived from live arrays and bounded by checks above.
+        let returned =
+          unsafe { memmove(destination.cast(), source_ptr.cast(), sz(copy_len)) }.cast();
+
+        assert_eq!(
+          returned, destination,
+          "unexpected return pointer for src={source_offset}, dst={destination_offset}, len={copy_len}",
+        );
+        assert_eq!(
+          actual_destination, expected_destination,
+          "unexpected destination bytes for src={source_offset}, dst={destination_offset}, len={copy_len}",
+        );
+        assert_eq!(source, source_before, "source buffer mutated unexpectedly");
+      }
+    }
+  }
+}
+
+#[test]
 fn memmove_adjacent_forward_boundary_copies_as_non_overlap() {
   let mut buffer = [0_u8, 1, 2, 3, 4, 5];
   let source = buffer.as_ptr();
@@ -1462,6 +1523,36 @@ fn memcpy_zero_length_allows_empty_array_destination_with_live_source() {
   assert_eq!(returned, destination_ptr);
   assert_eq!(destination, []);
   assert_eq!(source, [31_u8, 32, 33, 34]);
+}
+
+#[test]
+fn memcpy_zero_length_allows_mixed_live_and_empty_array_with_distinct_alignments() {
+  let mut live_destination_words = [31_u16, 32, 33, 34];
+  let empty_source_words: [u32; 0] = [];
+  let live_destination = live_destination_words
+    .as_mut_ptr()
+    .wrapping_add(1)
+    .cast::<u8>();
+  let empty_source = empty_source_words.as_ptr().cast::<u8>();
+  let live_destination_before = live_destination_words;
+  // SAFETY: `n == 0`, so pointers are never dereferenced.
+  let returned_live_destination =
+    unsafe { memcpy(live_destination.cast(), empty_source.cast(), sz(0)) }.cast::<u8>();
+
+  let mut empty_destination_words: [u16; 0] = [];
+  let live_source_words = [41_u32, 42, 43, 44];
+  let empty_destination = empty_destination_words.as_mut_ptr().cast::<u8>();
+  let live_source = live_source_words.as_ptr().wrapping_add(1).cast::<u8>();
+  // SAFETY: `n == 0`, so pointers are never dereferenced.
+  let returned_empty_destination =
+    unsafe { memcpy(empty_destination.cast(), live_source.cast(), sz(0)) }.cast::<u8>();
+
+  assert_eq!(returned_live_destination, live_destination);
+  assert_eq!(returned_empty_destination, empty_destination);
+  assert_eq!(live_destination_words, live_destination_before);
+  assert_eq!(empty_destination_words, []);
+  assert_eq!(empty_source_words, []);
+  assert_eq!(live_source_words, [41_u32, 42, 43, 44]);
 }
 
 #[test]

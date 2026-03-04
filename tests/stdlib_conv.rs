@@ -2258,6 +2258,39 @@ fn explicit_hex_negative_overflow_with_null_endptr_sets_erange() {
 }
 
 #[test]
+fn explicit_hex_prefixed_overflow_with_null_endptr_sets_erange() {
+  let big_prefixed_hex_digits = b"0xffffffffffffffffffffffffffffffff\0";
+
+  set_errno(351);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let alpha_overflow = unsafe { strtol(big_prefixed_hex_digits.as_ptr().cast(), null_mut(), 16) };
+
+  assert_eq!(alpha_overflow, c_long::MAX);
+  assert_eq!(errno_value(), ERANGE);
+
+  set_errno(352);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let beta_overflow = unsafe { strtoll(big_prefixed_hex_digits.as_ptr().cast(), null_mut(), 16) };
+
+  assert_eq!(beta_overflow, c_longlong::MAX);
+  assert_eq!(errno_value(), ERANGE);
+
+  set_errno(353);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let gamma_overflow = unsafe { strtoul(big_prefixed_hex_digits.as_ptr().cast(), null_mut(), 16) };
+
+  assert_eq!(gamma_overflow, c_ulong::MAX);
+  assert_eq!(errno_value(), ERANGE);
+
+  set_errno(354);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let delta_overflow = unsafe { strtoull(big_prefixed_hex_digits.as_ptr().cast(), null_mut(), 16) };
+
+  assert_eq!(delta_overflow, c_ulonglong::MAX);
+  assert_eq!(errno_value(), ERANGE);
+}
+
+#[test]
 fn conversion_error_errno_is_thread_local() {
   let input = b"123\0";
 

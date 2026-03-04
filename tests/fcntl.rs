@@ -408,6 +408,17 @@ fn fcntl_dupfd_cloexec_invalid_fd_with_excessive_minimum_overwrites_errno_with_e
 }
 
 #[test]
+fn fcntl_dupfd_cloexec_invalid_fd_with_excessive_minimum_sets_ebadf() {
+  write_errno(0);
+
+  // SAFETY: command does not dereference pointers and intentionally passes an invalid fd.
+  let result = unsafe { fcntl(-1, F_DUPFD_CLOEXEC, as_c_long(c_int::MAX)) };
+
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EBADF);
+}
+
+#[test]
 fn fcntl_dupfd_cloexec_closed_fd_sets_ebadf() {
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();

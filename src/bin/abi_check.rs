@@ -186,7 +186,7 @@ fn has_help_flag(args: &[String]) -> bool {
     }
 
     if let Some(value) = arg.strip_prefix("--golden=") {
-      if is_missing_option_value(value) {
+      if is_missing_option_value(value) || value.starts_with('-') {
         return false;
       }
 
@@ -1960,6 +1960,23 @@ memcpy
     );
     let parsed =
       parse_snapshot(snapshot).expect("snapshot parser should accept full CRLF line endings");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
+    assert!(parsed.symbols.contains("memcpy"));
+  }
+
+  #[test]
+  fn parse_snapshot_accepts_class_line_with_crlf_line_endings() {
+    let snapshot = concat!(
+      "ABI_SNAPSHOT_V1\n",
+      "ELF_CLASS=ELF64\r\n",
+      "ELF_MACHINE=Advanced Micro Devices X86-64\n",
+      "SYMBOLS:\n",
+      "memcpy\n",
+    );
+    let parsed = parse_snapshot(snapshot)
+      .expect("parser should accept CRLF line endings on ELF_CLASS metadata line");
 
     assert_eq!(parsed.class, "ELF64");
     assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");

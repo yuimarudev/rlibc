@@ -67,6 +67,17 @@ fn c_float_and_c_double_round_trip_as_rust_primitives() {
 }
 
 #[test]
+fn c_float_and_c_double_preserve_negative_zero_bits() {
+  let negative_zero_float: c_float = -0.0_f32;
+  let negative_zero_double: c_double = -0.0_f64;
+  let float_as_f32: f32 = negative_zero_float;
+  let double_as_f64: f64 = negative_zero_double;
+
+  assert_eq!(float_as_f32.to_bits(), (-0.0_f32).to_bits());
+  assert_eq!(double_as_f64.to_bits(), (-0.0_f64).to_bits());
+}
+
+#[test]
 fn c_void_pointer_cast_round_trip_preserves_address() {
   let mut value: usize = 0x1234_5678_9abc_def0;
   let value_ptr: *mut usize = &raw mut value;
@@ -112,10 +123,14 @@ fn size_types_match_pointer_word_width() {
 fn size_types_round_trip_with_machine_words() {
   let machine_unsigned: usize = 0x1234_5678_9abc_def0;
   let abi_unsigned: size_t = machine_unsigned as size_t;
-  let round_trip_unsigned: usize = abi_unsigned as usize;
   let machine_signed: isize = -0x1234_5678;
   let abi_signed: ssize_t = machine_signed as ssize_t;
-  let round_trip_signed: isize = abi_signed as isize;
+  let Ok(round_trip_unsigned) = usize::try_from(abi_unsigned) else {
+    panic!("size_t must round-trip to usize on x86_64 Linux baseline");
+  };
+  let Ok(round_trip_signed) = isize::try_from(abi_signed) else {
+    panic!("ssize_t must round-trip to isize on x86_64 Linux baseline");
+  };
 
   assert_eq!(round_trip_unsigned, machine_unsigned);
   assert_eq!(round_trip_signed, machine_signed);

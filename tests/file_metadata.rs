@@ -797,6 +797,46 @@ fn fstatat_absolute_path_with_invalid_fd_and_null_output_nofollow_sets_efault() 
 }
 
 #[test]
+fn fstatat_absolute_path_with_invalid_fd_and_null_output_empty_path_flag_sets_efault() {
+  let temp_dir = TempDir::new();
+  let file_path = temp_dir.path().join("absolute_null_output_empty_flag.txt");
+  let file_path_c = path_to_c_string(&file_path);
+
+  fs::write(&file_path, b"payload")
+    .expect("failed to create absolute-path null-output empty-flag test file");
+
+  write_errno(EINVAL);
+
+  // SAFETY: absolute path is valid and null output pointer intentionally probes EFAULT behavior.
+  let empty_path_flag_rc = unsafe {
+    fstatat(
+      -1,
+      file_path_c.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(empty_path_flag_rc, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  write_errno(EBADF);
+
+  // SAFETY: absolute path is valid and null output pointer intentionally probes EFAULT behavior.
+  let combined_flags_rc = unsafe {
+    fstatat(
+      -1,
+      file_path_c.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(combined_flags_rc, -1);
+  assert_eq!(read_errno(), EFAULT);
+}
+
+#[test]
 fn fstatat_null_path_and_output_with_nofollow_sets_efault() {
   write_errno(EBADF);
 

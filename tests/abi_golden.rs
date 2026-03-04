@@ -2481,6 +2481,43 @@ fn abi_check_binary_accepts_snapshot_with_all_crlf_line_endings() {
 }
 
 #[test]
+fn abi_check_binary_accepts_class_line_with_crlf_line_endings_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("class-line-crlf-line-endings");
+  let base_snapshot =
+    fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+      .expect("reference golden snapshot must be readable");
+  let snapshot_contents = base_snapshot.replacen("ELF_CLASS=ELF64\n", "ELF_CLASS=ELF64\r\n", 1);
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("class-line-crlf-line-endings golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    output.status.success(),
+    "abi_check must accept snapshots with CRLF ELF_CLASS metadata line endings\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stdout.contains("Golden ABI snapshot matched"),
+    "abi_check stdout must report successful golden snapshot matching for CRLF ELF_CLASS metadata line ending\nstdout:\n{stdout}",
+  );
+}
+
+#[test]
 fn abi_check_binary_accepts_trailing_crlf_empty_line_after_symbols_block_in_golden_snapshot() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)

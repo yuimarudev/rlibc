@@ -418,6 +418,39 @@ fn interleaved_null_and_misaligned_non_null_entries_are_skipped() {
 }
 
 #[test]
+fn repeated_valid_entries_with_mixed_skips_preserve_order() {
+  let _test_guard = lock_test();
+
+  reset_log();
+
+  let entry_align = core::mem::align_of::<InitFiniFn>();
+
+  if entry_align == 1 {
+    return;
+  }
+
+  let entries: [usize; 5] = [
+    first as *const () as usize,
+    0,
+    first as *const () as usize,
+    1,
+    second as *const () as usize,
+  ];
+  let start = entries.as_ptr().cast::<InitFiniFn>();
+  // SAFETY: `start` points to contiguous pointer-sized entries.
+  let end = unsafe { start.add(entries.len()) };
+
+  // SAFETY: range shape is valid; null and misaligned non-null slots should
+  // be skipped while repeated valid entries preserve order.
+  unsafe {
+    run_init_array_range(start, end);
+    run_fini_array_range(start, end);
+  }
+
+  assert_eq!(snapshot_log(), vec![1, 1, 2, 2, 1, 1]);
+}
+
+#[test]
 fn valid_init_with_partially_null_fini_only_runs_init_handlers() {
   let _test_guard = lock_test();
 

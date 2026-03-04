@@ -762,6 +762,14 @@ mod tests {
   }
 
   #[test]
+  fn configured_processor_count_falls_back_when_possible_has_internal_empty_token_and_present_missing()
+   {
+    let count = configured_processor_count_with(|| Some(String::from("0,,1")), || None, || 4);
+
+    assert_eq!(count, 4);
+  }
+
+  #[test]
   fn configured_processor_count_uses_present_file_when_possible_has_trailing_empty_token() {
     let count = configured_processor_count_with(
       || Some(String::from("0-1,")),

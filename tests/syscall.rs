@@ -343,6 +343,14 @@ fn syscall4_negative_number_returns_enosys() {
 }
 
 #[test]
+fn syscall4_large_negative_number_returns_enosys() {
+  // SAFETY: invalid large negative syscall number does not require valid pointer arguments.
+  let raw = unsafe { syscall4(-4096, 0, 0, 0, 0) };
+
+  assert_eq!(decode(raw), Err(ENOSYS));
+}
+
+#[test]
 fn syscall4_errno_window_upper_bound_number_returns_enosys() {
   // SAFETY: invalid negative syscall number does not require valid pointer arguments.
   let raw = unsafe { syscall4(-4095, 0, 0, 0, 0) };

@@ -2047,6 +2047,30 @@ mod tests {
   }
 
   #[test]
+  fn putenv_unset_failure_sets_errno_and_does_not_create_alias() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let key = b"RLIBC_I017_PUTENV_UNSET_FAIL_NO_ALIAS";
+    let mut entry_unset = b"RLIBC_I017_PUTENV_UNSET_FAIL_NO_ALIAS\0".to_vec();
+
+    remove_putenv_alias(key);
+    assert!(lookup_putenv_alias_value(key).is_none());
+
+    write_errno(62);
+
+    let _host_unavailable = force_host_env_unavailable_for_test();
+
+    // SAFETY: `entry_unset` points to a mutable NUL-terminated `NAME` string.
+    let rc = unsafe { putenv(entry_unset.as_mut_ptr().cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert!(lookup_putenv_alias_value(key).is_none());
+  }
+
+  #[test]
   fn putenv_unset_failure_sets_errno_and_preserves_alias() {
     let _test_guard = match test_lock().lock() {
       Ok(guard) => guard,

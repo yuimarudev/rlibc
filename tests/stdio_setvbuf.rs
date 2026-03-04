@@ -829,6 +829,55 @@ fn setvbuf_line_buffered_mode_flushes_dynamic_width_percent_f_newline_payload() 
 }
 
 #[test]
+fn setvbuf_line_buffered_mode_flushes_negative_dynamic_width_percent_f_newline_payload() {
+  let _guard = test_lock();
+  let format = b"%*f\n\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I022 line-buffered negative dynamic-width %f newline test"
+  );
+
+  write_errno(131);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 131);
+
+  write_errno(137);
+
+  // SAFETY: stream and variadic arguments satisfy `fprintf("%*f\\n", int, double)` contract.
+  let written = unsafe { fprintf(stream, format.as_ptr().cast(), -8, 1.25_f64) };
+
+  assert!(
+    written > 0,
+    "negative dynamic-width floating-point output with trailing newline must produce bytes",
+  );
+  assert_eq!(read_errno(), 137);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset = unsafe { lseek(fd, 0, SEEK_END) };
+  let expected_end = c_long::from(written);
+
+  assert_eq!(
+    end_offset, expected_end,
+    "line-buffered mode must flush when negative dynamic-width %f output includes literal newline",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
 fn setvbuf_line_buffered_mode_flushes_percent_s_newline_after_percent_f_without_literal_newline() {
   let _guard = test_lock();
   let format = b"%f%s\0";
