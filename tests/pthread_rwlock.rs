@@ -1342,6 +1342,46 @@ fn pthread_rwlock_failed_writer_reentries_still_allow_subsequent_reader_reacquir
 }
 
 #[test]
+fn pthread_rwlock_failed_writer_reentries_allow_reader_roundtrip_then_writer_reacquire() {
+  let mut rwlock = new_rwlock();
+
+  init_rwlock(&mut rwlock);
+
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+
+  // SAFETY: `rwlock_ptr` points to initialized lock storage.
+  assert_eq!(unsafe { pthread_rwlock_wrlock(rwlock_ptr) }, 0);
+
+  for _ in 0..3 {
+    // SAFETY: reader try-reentry under same-thread writer ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_tryrdlock(rwlock_ptr) }, EBUSY);
+    // SAFETY: writer try-reentry under same-thread writer ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+    // SAFETY: blocking reader reentry under same-thread writer ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, EDEADLK);
+    // SAFETY: blocking writer reentry under same-thread writer ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_wrlock(rwlock_ptr) }, EDEADLK);
+  }
+
+  // SAFETY: release writer ownership.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: reader reacquire remains valid after failed writer-owned reentries.
+  assert_eq!(unsafe { pthread_rwlock_tryrdlock(rwlock_ptr) }, 0);
+  // SAFETY: recursive reader acquisition remains valid.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+  // SAFETY: release one reader depth.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: release final reader depth.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: writer reacquire must still succeed after reader roundtrip.
+  assert_eq!(unsafe { pthread_rwlock_wrlock(rwlock_ptr) }, 0);
+  // SAFETY: release reacquired writer ownership.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: lock is initialized and unlocked.
+  assert_eq!(unsafe { pthread_rwlock_destroy(rwlock_ptr) }, 0);
+}
+
+#[test]
 fn pthread_rwlock_rdlock_returns_edeadlk_for_same_thread_writer_reentry() {
   let mut rwlock = new_rwlock();
 

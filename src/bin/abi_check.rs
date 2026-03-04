@@ -304,7 +304,7 @@ fn assign_golden_path(
     ));
   }
 
-  if is_missing_option_value(path) || (!allow_dash_prefix && path.starts_with('-')) {
+  if is_missing_option_value(path) || (!allow_dash_prefix && is_option_like_value(path)) {
     return Err(format!("missing value for {GOLDEN_FLAG}"));
   }
 
@@ -972,6 +972,15 @@ mod tests {
   fn parse_cli_options_rejects_option_like_golden_path() {
     let args = vec!["--golden".to_string(), "--bogus".to_string()];
     let error = parse_cli_options(&args).expect_err("option-like golden path must fail");
+
+    assert!(error.contains("missing value for --golden"));
+  }
+
+  #[test]
+  fn parse_cli_options_rejects_whitespace_prefixed_option_like_golden_path() {
+    let args = vec!["--golden".to_string(), "   --bogus".to_string()];
+    let error =
+      parse_cli_options(&args).expect_err("whitespace-prefixed option-like golden path must fail");
 
     assert!(error.contains("missing value for --golden"));
   }

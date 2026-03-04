@@ -78,6 +78,22 @@ fn c_float_and_c_double_preserve_negative_zero_bits() {
 }
 
 #[test]
+fn c_float_and_c_double_preserve_nan_payload_bits() {
+  let float_nan_bits: u32 = 0x7fc0_1234;
+  let float_nan: c_float = f32::from_bits(float_nan_bits);
+  let float_round_trip: f32 = float_nan;
+
+  let double_nan_bits: u64 = 0x7ff8_0000_0000_1234;
+  let double_nan: c_double = f64::from_bits(double_nan_bits);
+  let double_round_trip: f64 = double_nan;
+
+  assert!(float_round_trip.is_nan());
+  assert!(double_round_trip.is_nan());
+  assert_eq!(float_round_trip.to_bits(), float_nan_bits);
+  assert_eq!(double_round_trip.to_bits(), double_nan_bits);
+}
+
+#[test]
 fn c_void_pointer_cast_round_trip_preserves_address() {
   let mut value: usize = 0x1234_5678_9abc_def0;
   let value_ptr: *mut usize = &raw mut value;

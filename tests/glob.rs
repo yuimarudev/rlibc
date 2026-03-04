@@ -620,6 +620,30 @@ fn glob_nocheck_returns_literal_pattern_when_no_match() {
 }
 
 #[test]
+fn glob_nocheck_collapses_double_root_single_segment_and_trims_trailing_separators() {
+  let pattern = CString::new("//still-missing-i037///")
+    .unwrap_or_else(|error| panic!("pattern contains interior NUL: {error}"));
+  let mut state = GlobState::new();
+  let result = run_glob(&pattern, GLOB_NOCHECK, &mut state);
+
+  assert_eq!(result, 0);
+  assert_eq!(state.path_count(), 1);
+  assert_eq!(state.paths(), vec![String::from("/still-missing-i037")]);
+}
+
+#[test]
+fn glob_nocheck_preserves_escaped_trailing_separator_literal() {
+  let temp_dir = TempDir::new();
+  let pattern = pattern(temp_dir.path(), "still-missing-i037\\/");
+  let mut state = GlobState::new();
+  let result = run_glob(&pattern, GLOB_NOCHECK, &mut state);
+
+  assert_eq!(result, 0);
+  assert_eq!(state.path_count(), 1);
+  assert_eq!(state.paths(), vec![stringify_path(temp_dir.path()) + "/still-missing-i037\\/"]);
+}
+
+#[test]
 fn glob_dooffs_reserves_leading_null_slots_and_terminator() {
   let temp_dir = TempDir::new();
 

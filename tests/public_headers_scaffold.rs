@@ -486,7 +486,17 @@ fn prefix_has_logical_operator_suffix(prefix: &str) -> bool {
 fn prefix_has_unary_not_suffix(prefix: &str) -> bool {
   let trimmed = prefix.trim_end();
 
-  trimmed.ends_with('!') || trimmed.ends_with('~')
+  if trimmed.ends_with('!') || trimmed.ends_with('~') {
+    return true;
+  }
+
+  let mut normalized = trimmed;
+
+  while let Some(stripped) = normalized.strip_suffix('(') {
+    normalized = stripped.trim_end();
+  }
+
+  normalized.ends_with('!') || normalized.ends_with('~')
 }
 
 fn prefix_has_bitwise_operator_suffix(prefix: &str) -> bool {
@@ -671,13 +681,24 @@ fn prefix_looks_like_call_expression(prefix: &str) -> bool {
     skip_trailing_unary_operators(bytes, &mut cursor);
   }
 
-  if cursor < 2 || bytes[cursor - 1] != b'(' {
+  if cursor == 0 || bytes[cursor - 1] != b'(' {
     return false;
   }
 
-  let previous = bytes[cursor - 2];
+  let mut open_cursor = cursor;
 
-  is_identifier_byte(previous) || previous == b')' || previous == b']'
+  while open_cursor > 1 && bytes[open_cursor - 1] == b'(' {
+    let previous = bytes[open_cursor - 2];
+
+    if is_identifier_byte(previous) || previous == b')' || previous == b']' {
+      return true;
+    }
+
+    open_cursor -= 1;
+    skip_trailing_whitespace(bytes, &mut open_cursor);
+  }
+
+  false
 }
 
 fn line_declares_function_symbol(line: &str, symbol: &str) -> bool {
@@ -1230,6 +1251,11 @@ fn exported_symbol_detection_rejects_statement_context_function_call_text() {
     "getpid"
   ));
   assert!(!line_declares_exported_symbol("wrap(!getpid());", "getpid"));
+  assert!(!line_declares_exported_symbol("!(getpid());", "getpid"));
+  assert!(!line_declares_exported_symbol(
+    "wrap(!(getpid()));",
+    "getpid"
+  ));
   assert!(!line_declares_exported_symbol("!getpid();", "getpid"));
   assert!(!line_declares_exported_symbol("~getpid();", "getpid"));
   assert!(!line_declares_exported_symbol(

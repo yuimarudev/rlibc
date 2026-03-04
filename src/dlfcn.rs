@@ -11,7 +11,7 @@
 
 use crate::abi::errno::{
   EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST, EINTR,
-  EINVAL, EISDIR, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE, ETIMEDOUT,
+  EINVAL, EISDIR, ENETUNREACH, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE, ETIMEDOUT,
 };
 use crate::abi::types::{c_char, c_int, c_void};
 use crate::errno::{__errno_location, set_errno};
@@ -449,6 +449,7 @@ const fn io_error_kind_errno(error_kind: io::ErrorKind) -> Option<c_int> {
     io::ErrorKind::NotConnected => Some(ENOTCONN),
     io::ErrorKind::AddrInUse => Some(EADDRINUSE),
     io::ErrorKind::AddrNotAvailable => Some(EADDRNOTAVAIL),
+    io::ErrorKind::NetworkUnreachable => Some(ENETUNREACH),
     io::ErrorKind::PermissionDenied => Some(EACCES),
     io::ErrorKind::InvalidInput => Some(EINVAL),
     io::ErrorKind::Interrupted => Some(EINTR),

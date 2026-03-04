@@ -2052,6 +2052,71 @@ fn setvbuf_line_buffered_mode_defers_non_newline_percent_f_until_fflush() {
 }
 
 #[test]
+fn setvbuf_line_buffered_mode_defers_negative_dynamic_width_percent_f_without_newline_until_fflush()
+ {
+  let _guard = test_lock();
+  let format = b"%*f\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I022 negative dynamic-width %f defer test"
+  );
+
+  write_errno(173);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 173);
+
+  write_errno(179);
+
+  // SAFETY: stream and variadic arguments satisfy `fprintf("%*f", int, double)` contract.
+  let written = unsafe { fprintf(stream, format.as_ptr().cast(), -8, 1.25_f64) };
+
+  assert!(
+    written > 0,
+    "negative dynamic-width floating-point output must produce bytes",
+  );
+  assert_eq!(read_errno(), 179);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_before_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_before_flush, 0,
+    "line-buffered mode must defer negative dynamic-width %f output without newline until fflush",
+  );
+
+  write_errno(181);
+
+  // SAFETY: stream pointer came from `tmpfile` and is valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 181);
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_after_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_after_flush,
+    c_long::from(written),
+    "fflush must make deferred negative dynamic-width %f output visible",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
 fn setvbuf_line_buffered_mode_defers_unsupported_directive_with_escaped_percent_until_fflush() {
   let _guard = test_lock();
   let format = b"%f%%\0";

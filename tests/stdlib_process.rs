@@ -803,6 +803,9 @@ fn underscore_exit_skips_atexit_handlers() {
 fn exit_runs_atexit_handlers_and_preserves_status_code() {
   let output = run_child_scenario(SCENARIO_EXIT_STATUS);
   let output_context = format_output(&output);
+  let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
+  let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
+  let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let marker_count = marker_occurrences(&output.stdout, b"{E}");
   let lifo_marker_count = marker_occurrences(&output.stdout, b"{A}")
     + marker_occurrences(&output.stdout, b"{B}")
@@ -823,6 +826,18 @@ fn exit_runs_atexit_handlers_and_preserves_status_code() {
     output.status.signal(),
     None,
     "exit scenario should not terminate due to signal: {output_context}"
+  );
+  assert!(
+    runner_banner_count >= 1,
+    "exit scenario should start child test harness before status-preserving termination: {output_context}"
+  );
+  assert_eq!(
+    child_entrypoint_count, 0,
+    "exit scenario should terminate before child test completion marker: {output_context}"
+  );
+  assert_eq!(
+    failed_marker_count, 0,
+    "exit scenario should terminate before child harness FAILED summary in stdout: {output_context}"
   );
   assert_eq!(
     marker_count, 1,
@@ -854,6 +869,9 @@ fn exit_runs_atexit_handlers_and_preserves_status_code() {
 fn exit_runs_all_handlers_in_lifo_order_and_preserves_status_code() {
   let output = run_child_scenario(SCENARIO_EXIT_LIFO_STATUS);
   let output_context = format_output(&output);
+  let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
+  let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
+  let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let first_count = marker_occurrences(&output.stdout, b"{A}");
   let second_count = marker_occurrences(&output.stdout, b"{B}");
   let third_count = marker_occurrences(&output.stdout, b"{C}");
@@ -874,6 +892,18 @@ fn exit_runs_all_handlers_in_lifo_order_and_preserves_status_code() {
     output.status.signal(),
     None,
     "exit LIFO scenario should not terminate due to signal: {output_context}"
+  );
+  assert!(
+    runner_banner_count >= 1,
+    "exit LIFO scenario should start child test harness before status-preserving termination: {output_context}"
+  );
+  assert_eq!(
+    child_entrypoint_count, 0,
+    "exit LIFO scenario should terminate before child test completion marker: {output_context}"
+  );
+  assert_eq!(
+    failed_marker_count, 0,
+    "exit LIFO scenario should terminate before child harness FAILED summary in stdout: {output_context}"
   );
   assert!(
     output.stdout.ends_with(b"{C}{B}{A}"),

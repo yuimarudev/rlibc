@@ -983,6 +983,56 @@ fn fstatat_absolute_path_with_non_directory_fd_and_null_output_nofollow_sets_efa
 }
 
 #[test]
+fn fstatat_absolute_path_with_non_directory_fd_and_null_output_empty_path_flag_sets_efault() {
+  let temp_dir = TempDir::new();
+  let target_path = temp_dir
+    .path()
+    .join("absolute_null_output_empty_flag_target.txt");
+  let fd_source_path = temp_dir
+    .path()
+    .join("absolute_null_output_empty_flag_fd_source.txt");
+  let target_path_c = path_to_c_string(&target_path);
+
+  fs::write(&target_path, b"payload")
+    .expect("failed to create absolute-path empty-flag target");
+  fs::write(&fd_source_path, b"fd-source")
+    .expect("failed to create non-directory fd source for absolute-path empty-flag test");
+
+  let non_directory_fd =
+    File::open(&fd_source_path).expect("failed to open non-directory fd source file");
+
+  write_errno(ENOTDIR);
+
+  // SAFETY: absolute path pointer is valid; Linux ignores non-directory `dirfd` for absolute paths.
+  let empty_path_flag_rc = unsafe {
+    fstatat(
+      non_directory_fd.as_raw_fd(),
+      target_path_c.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(empty_path_flag_rc, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  write_errno(EBADF);
+
+  // SAFETY: absolute path pointer is valid; Linux ignores non-directory `dirfd` for absolute paths.
+  let combined_flags_rc = unsafe {
+    fstatat(
+      non_directory_fd.as_raw_fd(),
+      target_path_c.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(combined_flags_rc, -1);
+  assert_eq!(read_errno(), EFAULT);
+}
+
+#[test]
 fn fstatat_relative_path_with_non_directory_fd_and_null_output_nofollow_sets_enotdir() {
   let temp_dir = TempDir::new();
   let target_name =

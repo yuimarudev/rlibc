@@ -717,6 +717,22 @@ fn crt_pipeline_rejects_short_help_token_after_double_dash_as_positional() {
 }
 
 #[test]
+fn crt_pipeline_rejects_three_option_like_tokens_after_double_dash_without_summary_suffix() {
+  let args = vec![
+    "--".to_string(),
+    "--help".to_string(),
+    "--cc".to_string(),
+    "--out-dir".to_string(),
+  ];
+  let output = run_pipeline(&args);
+
+  assert_pipeline_failure_contains(
+    &output,
+    "unexpected positional arguments: --help, --cc, --out-dir",
+  );
+}
+
+#[test]
 fn crt_pipeline_summarizes_many_option_like_positionals_after_double_dash() {
   let args = vec![
     "--".to_string(),

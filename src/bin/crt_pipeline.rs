@@ -279,8 +279,8 @@ fn print_usage() {
 #[cfg(test)]
 mod tests {
   use super::{
-    Action, Config, DEFAULT_COMPILER, DEFAULT_OUTPUT_DIR, crt_source_root, ensure_source_file,
-    parse_args, resolve_default_compiler,
+    crt_source_root, ensure_source_file, parse_args, resolve_default_compiler, Action, Config,
+    DEFAULT_COMPILER, DEFAULT_OUTPUT_DIR,
   };
   use std::path::{Path, PathBuf};
   use std::sync::atomic::{AtomicU64, Ordering};
@@ -695,6 +695,22 @@ mod tests {
       .expect_err("short help token after double dash must be treated as positional");
 
     assert_eq!(error, "unexpected positional argument: -h");
+  }
+
+  #[test]
+  fn parse_args_rejects_three_option_like_tokens_after_double_dash_without_summary_suffix() {
+    let error = parse_args(&[
+      "--".to_string(),
+      "--help".to_string(),
+      "--cc".to_string(),
+      "--out-dir".to_string(),
+    ])
+    .expect_err("three option-like tokens after double dash must fail without summary suffix");
+
+    assert_eq!(
+      error,
+      "unexpected positional arguments: --help, --cc, --out-dir"
+    );
   }
 
   #[test]

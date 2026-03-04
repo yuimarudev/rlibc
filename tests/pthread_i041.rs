@@ -1323,6 +1323,92 @@ fn pthread_unknown_probe_does_not_break_native_attr_round_trip() {
 }
 
 #[test]
+fn pthread_unknown_probe_during_local_detached_lifecycle_stays_eventually_releasable() {
+  let _serial = pthread_i041_serial_guard();
+  let baseline = create_joinable_thread(return_argument, ptr::null_mut());
+  // SAFETY: thread id was produced by `pthread_create`.
+  let baseline_join = unsafe { pthread_join(baseline, ptr::null_mut()) };
+
+  assert_eq!(baseline_join, 0);
+
+  let state = Box::new(DetachCleanupState {
+    release: AtomicBool::new(false),
+    exited: AtomicBool::new(false),
+  });
+  let state_ptr = Box::into_raw(state);
+  let detached_thread =
+    create_joinable_thread(wait_for_release_then_exit, state_ptr.cast::<c_void>());
+  let detach_result = pthread_detach(detached_thread);
+  let Some(mut unknown_candidate) = detached_thread.checked_add(1) else {
+    panic!("pthread_t id increment overflowed unexpectedly");
+  };
+  if unknown_candidate == baseline {
+    let Some(next_candidate) = unknown_candidate.checked_add(1) else {
+      panic!("pthread_t second id increment overflowed unexpectedly");
+    };
+    unknown_candidate = next_candidate;
+  }
+
+  assert_eq!(detach_result, 0);
+  assert_ne!(unknown_candidate, baseline);
+  assert_ne!(unknown_candidate, detached_thread);
+  assert_detached_handle_stays_einval_pre_exit(
+    detached_thread,
+    "detached thread should stay EINVAL before explicit release while unknown probes run",
+  );
+
+  for iteration in 0..24 {
+    let (first, second) = if iteration % 2 == 0 {
+      // SAFETY: probing unknown ids is intentional for regression coverage.
+      let join = unsafe { pthread_join(unknown_candidate, ptr::null_mut()) };
+      let detach = pthread_detach(unknown_candidate);
+
+      (join, detach)
+    } else {
+      let detach = pthread_detach(unknown_candidate);
+      // SAFETY: probing unknown ids is intentional for regression coverage.
+      let join = unsafe { pthread_join(unknown_candidate, ptr::null_mut()) };
+
+      (detach, join)
+    };
+
+    assert_eq!(first, ESRCH);
+    assert_eq!(second, ESRCH);
+  }
+
+  release_and_wait_thread_exit(
+    state_ptr,
+    "detached thread should exit after release even when unknown probes are interleaved",
+  );
+  wait_until_detached_handle_released(
+    detached_thread,
+    "detached thread join path should converge to ESRCH after release",
+  );
+  wait_until_detach_reports_esrch(
+    detached_thread,
+    "detached thread detach path should converge to ESRCH after release",
+  );
+  assert_released_handle_stays_esrch(
+    detached_thread,
+    "detached thread should stay ESRCH after release",
+  );
+
+  for _ in 0..8 {
+    // SAFETY: probing unknown ids is intentional for regression coverage.
+    let join = unsafe { pthread_join(unknown_candidate, ptr::null_mut()) };
+    let detach = pthread_detach(unknown_candidate);
+
+    assert_eq!(join, ESRCH);
+    assert_eq!(detach, ESRCH);
+  }
+
+  // SAFETY: ownership is reclaimed exactly once here.
+  unsafe {
+    drop(Box::from_raw(state_ptr));
+  }
+}
+
+#[test]
 fn pthread_join_is_single_consumer() {
   let _serial = pthread_i041_serial_guard();
   let thread = create_joinable_thread(return_argument, ptr::null_mut());

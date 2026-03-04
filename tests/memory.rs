@@ -767,6 +767,58 @@ fn memmove_matches_copy_within_for_u64_all_in_bounds_byte_ranges() {
 }
 
 #[test]
+fn memmove_matches_copy_within_for_u128_all_in_bounds_byte_ranges() {
+  let original = [
+    0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f_u128,
+    0x1011_1213_1415_1617_1819_1a1b_1c1d_1e1f,
+    0x2021_2223_2425_2627_2829_2a2b_2c2d_2e2f,
+  ];
+  let total_bytes = core::mem::size_of_val(&original);
+
+  for source_offset in 0..=total_bytes {
+    for destination_offset in 0..=total_bytes {
+      for copy_len in 0..=total_bytes {
+        if source_offset + copy_len > total_bytes || destination_offset + copy_len > total_bytes {
+          continue;
+        }
+
+        let mut actual = original;
+        let mut expected = original;
+
+        // SAFETY: Arrays are live and converted to byte slices of exact in-bounds length.
+        unsafe {
+          let expected_bytes = core::slice::from_raw_parts_mut(
+            expected.as_mut_ptr().cast::<u8>(),
+            core::mem::size_of_val(&expected),
+          );
+          if copy_len != 0 {
+            expected_bytes.copy_within(source_offset..source_offset + copy_len, destination_offset);
+          }
+        }
+
+        let destination = actual
+          .as_mut_ptr()
+          .cast::<u8>()
+          .wrapping_add(destination_offset);
+        let source = actual.as_ptr().cast::<u8>().wrapping_add(source_offset);
+        // SAFETY: For `copy_len > 0`, range checks above guarantee in-bounds access.
+        // For `copy_len == 0`, pointers are never dereferenced.
+        let returned = unsafe { memmove(destination.cast(), source.cast(), sz(copy_len)) }.cast();
+
+        assert_eq!(
+          returned, destination,
+          "unexpected return pointer for src={source_offset}, dst={destination_offset}, len={copy_len}",
+        );
+        assert_eq!(
+          actual, expected,
+          "unexpected u128 bytes for src={source_offset}, dst={destination_offset}, len={copy_len}",
+        );
+      }
+    }
+  }
+}
+
+#[test]
 fn memmove_unaligned_u128_word_boundary_lengths_match_copy_within() {
   let original = [
     0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f_u128,

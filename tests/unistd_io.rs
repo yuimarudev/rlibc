@@ -1513,6 +1513,19 @@ fn send_invalid_fd_with_zero_length_and_nosignal_flag_returns_minus_one_and_errn
 }
 
 #[test]
+fn send_invalid_fd_with_zero_length_and_dontwait_flag_returns_minus_one_and_errno_ebadf() {
+  let payload = [0x19_u8];
+
+  set_errno(0);
+
+  // SAFETY: payload pointer is valid and fd is intentionally invalid.
+  let sent = unsafe { send(-1, payload.as_ptr().cast::<c_void>(), sz(0), MSG_DONTWAIT) };
+
+  assert_eq!(sent, -1);
+  assert_eq!(errno_value(), EBADF);
+}
+
+#[test]
 fn send_invalid_fd_with_dontwait_flag_returns_minus_one_and_errno_ebadf() {
   let payload = [0x17_u8];
 

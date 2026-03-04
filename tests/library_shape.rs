@@ -817,6 +817,13 @@ fn project_name_c_string_accessors_stay_consistent() {
     "project_name_cstr() payload should match project_name() bytes"
   );
   assert!(
+    name_bytes.iter().all(|byte| byte.is_ascii_lowercase()
+      || byte.is_ascii_digit()
+      || *byte == b'_'
+      || *byte == b'-'),
+    "project_name() should stay within Cargo package-name ASCII character set"
+  );
+  assert!(
     !c_name.to_bytes().contains(&0),
     "project_name_cstr() payload should not contain interior NUL bytes"
   );

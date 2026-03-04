@@ -1079,6 +1079,44 @@ fn setenv_null_name_no_overwrite_preserves_putenv_alias_and_sets_errno() {
 }
 
 #[test]
+fn setenv_null_name_i016_overwrite_preserves_rebound_empty_putenv_alias_and_sets_errno() {
+  let _env = EnvScope::new();
+  let tracked_name = c_string("RLIBC_I016_SETENV_NULL_NAME_OVERWRITE_REBOUND_EMPTY_ALIAS");
+  let value = c_string("replacement");
+  let prefix = b"RLIBC_I016_SETENV_NULL_NAME_OVERWRITE_REBOUND_EMPTY_ALIAS=";
+  let mut first = b"RLIBC_I016_SETENV_NULL_NAME_OVERWRITE_REBOUND_EMPTY_ALIAS=alpha\0".to_vec();
+  let mut second = b"RLIBC_I016_SETENV_NULL_NAME_OVERWRITE_REBOUND_EMPTY_ALIAS=\0\0".to_vec();
+
+  write_errno(17);
+
+  // SAFETY: `first` is mutable and NUL-terminated for C.
+  let first_put_result = unsafe { putenv(first.as_mut_ptr().cast()) };
+  // SAFETY: `second` is mutable and NUL-terminated for C.
+  let second_put_result = unsafe { putenv(second.as_mut_ptr().cast()) };
+
+  assert_eq!(first_put_result, 0);
+  assert_eq!(second_put_result, 0);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  // SAFETY: null name pointer is passed intentionally to validate EINVAL path.
+  let set_result = unsafe { setenv(core::ptr::null(), value.as_ptr(), 1) };
+
+  assert_eq!(set_result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  let value_start = prefix.len();
+
+  first[value_start..value_start + 5].copy_from_slice(b"omega");
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  second[value_start] = b'z';
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(b"z".to_vec()));
+}
+
+#[test]
 fn unsetenv_invalid_name_preserves_putenv_alias_and_sets_errno() {
   let _env = EnvScope::new();
   let tracked_name = c_string("RLIBC_I017_UNSETENV_INVALID_ALIAS");
