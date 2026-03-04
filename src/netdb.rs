@@ -372,7 +372,23 @@ fn parse_service_port(service: *const c_char, flags: c_int, protocol: c_int) -> 
     .to_str()
     .map_err(|_| EAI_NONAME)?;
 
-  resolve_service_name(service_text, protocol).ok_or(EAI_NONAME)
+  resolve_service_name(service_text, protocol).ok_or(EAI_SERVICE)
+}
+
+const fn map_getaddrinfo_service_error(
+  service: *const c_char,
+  flags: c_int,
+  error: c_int,
+) -> c_int {
+  if error != EAI_NONAME {
+    return error;
+  }
+
+  if service.is_null() || (flags & AI_NUMERICSERV) != 0 {
+    return error;
+  }
+
+  EAI_SERVICE
 }
 
 fn parse_numeric_host_text(node_text: &str) -> Option<AddressCandidate> {
@@ -894,6 +910,7 @@ fn write_output_string(buffer: *mut c_char, buffer_len: usize, output: &str) -> 
 ///   - if `/etc/services` lookup does not resolve, a small builtin fallback is
 ///     used for common names/aliases (`http`, `www`, `www-http`, `https`,
 ///     `www-https`, `ssh`, `domain`).
+///   - unresolved service names without `AI_NUMERICSERV` return `EAI_SERVICE`.
 /// - `ai_canonname` is always returned as null.
 ///
 /// # Safety
@@ -948,7 +965,7 @@ pub unsafe extern "C" fn getaddrinfo(
   };
   let port = match parse_service_port(service, flags, protocol) {
     Ok(value) => value,
-    Err(error) => return error,
+    Err(error) => return map_getaddrinfo_service_error(service, flags, error),
   };
   let candidates = match resolve_node_candidates(node, family, flags) {
     Ok(value) => value,
@@ -1262,7 +1279,7 @@ mod tests {
     let error = parse_service_port(service.as_ptr(), 0, IPPROTO_TCP)
       .expect_err("named service with surrounding whitespace should be rejected");
 
-    assert_eq!(error, EAI_NONAME);
+    assert_eq!(error, EAI_SERVICE);
   }
 
   #[test]
@@ -1271,7 +1288,7 @@ mod tests {
     let error = parse_service_port(service.as_ptr(), 0, IPPROTO_TCP)
       .expect_err("numeric service with trailing whitespace should be rejected");
 
-    assert_eq!(error, EAI_NONAME);
+    assert_eq!(error, EAI_SERVICE);
   }
 
   #[test]

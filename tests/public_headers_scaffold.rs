@@ -457,6 +457,20 @@ fn prefix_has_argument_separator(prefix: &str) -> bool {
   prefix.trim_end().ends_with(',')
 }
 
+fn strip_trailing_paren_and_unary_wrappers(prefix: &str) -> &str {
+  let mut trimmed = prefix.trim_end();
+
+  loop {
+    let stripped = trimmed.trim_end_matches(['(', '!', '~', '+', '-', '*']);
+
+    if stripped.len() == trimmed.len() {
+      return trimmed;
+    }
+
+    trimmed = stripped.trim_end();
+  }
+}
+
 fn prefix_has_logical_operator_suffix(prefix: &str) -> bool {
   let trimmed = prefix.trim_end();
 
@@ -464,7 +478,7 @@ fn prefix_has_logical_operator_suffix(prefix: &str) -> bool {
     return true;
   }
 
-  let trimmed = strip_trailing_prefix_expression_wrappers(trimmed);
+  let trimmed = strip_trailing_paren_and_unary_wrappers(trimmed);
 
   trimmed.ends_with("&&") || trimmed.ends_with("||")
 }
@@ -477,6 +491,16 @@ fn prefix_has_unary_not_suffix(prefix: &str) -> bool {
 
 fn prefix_has_bitwise_operator_suffix(prefix: &str) -> bool {
   let trimmed = prefix.trim_end();
+
+  if trimmed.ends_with("&&") || trimmed.ends_with("||") {
+    return false;
+  }
+
+  if trimmed.ends_with('&') || trimmed.ends_with('|') || trimmed.ends_with('^') {
+    return true;
+  }
+
+  let trimmed = strip_trailing_paren_and_unary_wrappers(trimmed);
 
   if trimmed.ends_with("&&") || trimmed.ends_with("||") {
     return false;
@@ -1537,6 +1561,54 @@ fn setjmp_header_undefines_predefined_noreturn_helper_after_include() {
     "#include <setjmp.h>",
     "#ifdef RLIBC_NORETURN",
     "#error \"RLIBC_NORETURN should be undefined after including <setjmp.h>\"",
+    "#endif",
+    "",
+    "int main(void) { return 0; }",
+    "",
+  ]
+  .join("\n");
+
+  std::fs::write(&source_path, translation_unit)
+    .unwrap_or_else(|error| panic!("failed to write {}: {error}", source_path.display()));
+
+  let output = Command::new(&compiler)
+    .arg("-std=c11")
+    .arg("-fsyntax-only")
+    .arg("-I")
+    .arg(include_root())
+    .arg(&source_path)
+    .output()
+    .unwrap_or_else(|error| panic!("failed to execute {compiler}: {error}"));
+  let _ = std::fs::remove_file(&source_path);
+
+  assert!(
+    output.status.success(),
+    "{compiler} failed for {}.\nstdout:\n{}\nstderr:\n{}",
+    source_path.display(),
+    String::from_utf8_lossy(&output.stdout),
+    String::from_utf8_lossy(&output.stderr),
+  );
+}
+
+#[test]
+fn setjmp_header_reinclude_after_predefined_helper_keeps_macro_undefined() {
+  let compiler = find_c_compiler()
+    .unwrap_or_else(|| panic!("no C compiler found in PATH (checked CC, cc, clang, gcc)"));
+  let nonce = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_nanos();
+  let source_path = std::env::temp_dir().join(format!(
+    "rlibc_setjmp_noreturn_predefined_reinclude_{}_{}.c",
+    std::process::id(),
+    nonce
+  ));
+  let translation_unit = [
+    "#define RLIBC_NORETURN __attribute__((deprecated))",
+    "#include <setjmp.h>",
+    "#include <setjmp.h>",
+    "#ifdef RLIBC_NORETURN",
+    "#error \"RLIBC_NORETURN should remain undefined after re-including <setjmp.h>\"",
     "#endif",
     "",
     "int main(void) { return 0; }",

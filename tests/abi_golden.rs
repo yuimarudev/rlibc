@@ -811,6 +811,160 @@ abort
 }
 
 #[test]
+fn abi_check_binary_rejects_symbols_line_with_leading_tab_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("symbols-line-leading-tab");
+  let snapshot_contents = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+\tSYMBOLS:
+abort
+";
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("symbols-line-leading-tab golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject SYMBOLS line with leading tab whitespace\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("invalid `SYMBOLS:` line with surrounding whitespace"),
+    "abi_check stderr must explain leading-tab SYMBOLS line rejection\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
+fn abi_check_binary_rejects_symbols_line_with_trailing_tab_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("symbols-line-trailing-tab");
+  let snapshot_contents = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:\t
+abort
+";
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("symbols-line-trailing-tab golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject SYMBOLS line with trailing tab whitespace\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("invalid `SYMBOLS:` line with surrounding whitespace"),
+    "abi_check stderr must explain trailing-tab SYMBOLS line rejection\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
+fn abi_check_binary_accepts_symbols_line_with_carriage_return_suffix_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("symbols-line-carriage-return-suffix");
+  let base_snapshot =
+    fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+      .expect("reference golden snapshot must be readable");
+  let snapshot_contents = base_snapshot.replacen("SYMBOLS:\n", "SYMBOLS:\r\n", 1);
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("symbols-line-carriage-return-suffix golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    output.status.success(),
+    "abi_check must accept snapshots with CRLF-style SYMBOLS line endings\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stdout.contains("Golden ABI snapshot matched"),
+    "abi_check stdout must report successful golden snapshot matching for CRLF SYMBOLS line endings\nstdout:\n{stdout}",
+  );
+}
+
+#[test]
+fn abi_check_binary_rejects_trailing_whitespace_only_line_after_symbols_block_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("symbols-trailing-whitespace-only-line");
+  let base_snapshot =
+    fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+      .expect("reference golden snapshot must be readable");
+  let snapshot_contents = format!("{base_snapshot} \t \n");
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("symbols-trailing-whitespace-only-line golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject trailing whitespace-only lines inside SYMBOLS block\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("invalid trailing whitespace-only line inside `SYMBOLS:` block"),
+    "abi_check stderr must explain trailing whitespace-only line rejection inside SYMBOLS block\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
 fn abi_check_binary_rejects_missing_symbols_block_in_golden_snapshot() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
@@ -2162,6 +2316,46 @@ fn abi_check_binary_rejects_magic_header_with_trailing_tab_in_golden_snapshot() 
   assert!(
     stderr.contains("snapshot has invalid magic header with surrounding whitespace"),
     "abi_check stderr must explain trailing-tab magic header rejection\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
+fn abi_check_binary_accepts_magic_header_with_carriage_return_suffix_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("magic-header-carriage-return-suffix");
+  let base_snapshot =
+    fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+      .expect("reference golden snapshot must be readable");
+  let suffix = base_snapshot
+    .strip_prefix("ABI_SNAPSHOT_V1")
+    .expect("reference golden snapshot must start with ABI_SNAPSHOT_V1");
+  let snapshot_contents = format!("ABI_SNAPSHOT_V1\r{suffix}");
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("magic-header-carriage-return-suffix golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    output.status.success(),
+    "abi_check must accept snapshots with CRLF-style magic-header line endings\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stdout.contains("Golden ABI snapshot matched"),
+    "abi_check stdout must report successful golden snapshot matching for CRLF header line endings\nstdout:\n{stdout}",
   );
 }
 

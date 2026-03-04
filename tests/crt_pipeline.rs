@@ -678,6 +678,14 @@ fn crt_pipeline_rejects_option_like_token_after_double_dash_as_positional() {
 }
 
 #[test]
+fn crt_pipeline_rejects_short_help_token_after_double_dash_as_positional() {
+  let args = vec!["--".to_string(), "-h".to_string()];
+  let output = run_pipeline(&args);
+
+  assert_pipeline_failure_contains(&output, "unexpected positional argument: -h");
+}
+
+#[test]
 fn crt_pipeline_summarizes_many_option_like_positionals_after_double_dash() {
   let args = vec![
     "--".to_string(),
@@ -770,6 +778,42 @@ fn crt_pipeline_short_help_before_blank_out_dir_equals_value_still_succeeds() {
   assert!(
     fs::metadata(&default_output_dir).is_err(),
     "help mode should not create default output directory when trailing --out-dir= is blank: {}",
+    default_output_dir.display()
+  );
+}
+
+#[test]
+fn crt_pipeline_long_help_before_double_dash_with_trailing_positional_still_succeeds() {
+  let sandbox = TempDirectory::create();
+  let args = vec![
+    "--help".to_string(),
+    "--".to_string(),
+    "trailing-positional".to_string(),
+  ];
+  let output = run_pipeline_in_dir(&args, sandbox.path());
+  let default_output_dir = sandbox.path().join("target/release/crt");
+
+  assert_pipeline_success(&output);
+  assert_pipeline_stdout_contains(&output, "Usage: cargo run --release --bin crt_pipeline --");
+  assert!(
+    fs::metadata(&default_output_dir).is_err(),
+    "help mode should not create default output directory when -- and trailing positional follow: {}",
+    default_output_dir.display()
+  );
+}
+
+#[test]
+fn crt_pipeline_short_help_before_double_dash_with_trailing_positional_still_succeeds() {
+  let sandbox = TempDirectory::create();
+  let args = vec!["-h".to_string(), "--".to_string(), "tail".to_string()];
+  let output = run_pipeline_in_dir(&args, sandbox.path());
+  let default_output_dir = sandbox.path().join("target/release/crt");
+
+  assert_pipeline_success(&output);
+  assert_pipeline_stdout_contains(&output, "Usage: cargo run --release --bin crt_pipeline --");
+  assert!(
+    fs::metadata(&default_output_dir).is_err(),
+    "help mode should not create default output directory when -- and trailing positional follow: {}",
     default_output_dir.display()
   );
 }

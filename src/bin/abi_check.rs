@@ -537,11 +537,18 @@ fn parse_snapshot(contents: &str) -> Result<AbiSnapshot, String> {
     let line = raw_line.trim();
 
     if in_symbol_block && line.is_empty() {
-      if lines
+      let remaining_lines_are_blank = lines
         .clone()
-        .all(|remaining_line| remaining_line.trim().is_empty())
-      {
+        .all(|remaining_line| remaining_line.trim().is_empty());
+
+      if remaining_lines_are_blank && raw_line.is_empty() && lines.clone().all(str::is_empty) {
         break;
+      }
+
+      if remaining_lines_are_blank {
+        return Err(
+          "snapshot has invalid trailing whitespace-only line inside `SYMBOLS:` block".to_string(),
+        );
       }
 
       return Err("snapshot has empty line inside `SYMBOLS:` block".to_string());
@@ -1922,6 +1929,17 @@ memcpy
   }
 
   #[test]
+  fn parse_snapshot_accepts_magic_header_with_crlf_line_endings() {
+    let snapshot = "ABI_SNAPSHOT_V1\r\nELF_CLASS=ELF64\nELF_MACHINE=Advanced Micro Devices X86-64\nSYMBOLS:\nmemcpy\n";
+    let parsed = parse_snapshot(snapshot)
+      .expect("CRLF line endings in snapshot header should be accepted for portability");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
+    assert!(parsed.symbols.contains("memcpy"));
+  }
+
+  #[test]
   fn parse_snapshot_rejects_empty_symbols_block() {
     let snapshot = "\
 ABI_SNAPSHOT_V1
@@ -2211,6 +2229,53 @@ memcpy
   }
 
   #[test]
+  fn parse_snapshot_rejects_symbols_line_with_leading_tab() {
+    let snapshot = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+\tSYMBOLS:
+memcpy
+";
+    let error =
+      parse_snapshot(snapshot).expect_err("SYMBOLS line with leading tab must not be normalized");
+
+    assert!(error.contains("invalid `SYMBOLS:` line with surrounding whitespace"));
+  }
+
+  #[test]
+  fn parse_snapshot_rejects_symbols_line_with_trailing_tab() {
+    let snapshot = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:\t
+memcpy
+";
+    let error =
+      parse_snapshot(snapshot).expect_err("SYMBOLS line with trailing tab must not be normalized");
+
+    assert!(error.contains("invalid `SYMBOLS:` line with surrounding whitespace"));
+  }
+
+  #[test]
+  fn parse_snapshot_accepts_symbols_line_with_crlf_line_endings() {
+    let snapshot = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:\r
+memcpy
+";
+    let parsed = parse_snapshot(snapshot)
+      .expect("CRLF line endings in SYMBOLS line should be accepted for portability");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
+    assert!(parsed.symbols.contains("memcpy"));
+  }
+
+  #[test]
   fn parse_snapshot_rejects_duplicate_symbol_entries() {
     let snapshot = "\
 ABI_SNAPSHOT_V1
@@ -2317,6 +2382,23 @@ memcpy
       parse_snapshot(snapshot).expect("trailing empty line after symbol list should be accepted");
 
     assert_eq!(parsed.symbols, BTreeSet::from(["memcpy".to_string()]));
+  }
+
+  #[test]
+  fn parse_snapshot_rejects_trailing_whitespace_only_line_after_symbols_block() {
+    let snapshot = concat!(
+      "ABI_SNAPSHOT_V1\n",
+      "ELF_CLASS=ELF64\n",
+      "ELF_MACHINE=Advanced Micro Devices X86-64\n",
+      "SYMBOLS:\n",
+      "memcpy\n",
+      " \t \n",
+    );
+    let error = parse_snapshot(snapshot).expect_err(
+      "trailing whitespace-only line after symbol list must not be normalized as empty",
+    );
+
+    assert!(error.contains("invalid trailing whitespace-only line inside `SYMBOLS:` block"));
   }
 
   #[test]

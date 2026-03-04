@@ -1166,6 +1166,46 @@ fn fstatat_absolute_missing_path_ignores_dirfd_and_sets_enoent() {
 }
 
 #[test]
+fn fstatat_absolute_missing_path_with_empty_path_flag_ignores_dirfd_and_sets_enoent() {
+  let temp_dir = TempDir::new();
+  let missing_path = temp_dir
+    .path()
+    .join("missing_absolute_path_with_empty_flag.txt");
+  let missing_path_c = path_to_c_string(&missing_path);
+  let mut stat_buf = Stat::default();
+
+  write_errno(EINVAL);
+
+  // SAFETY: absolute path pointer/output pointer are valid; `dirfd` is ignored for absolute paths.
+  let empty_path_flag_rc = unsafe {
+    fstatat(
+      -1,
+      missing_path_c.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(empty_path_flag_rc, -1);
+  assert_eq!(read_errno(), ENOENT);
+
+  write_errno(EBADF);
+
+  // SAFETY: absolute path pointer/output pointer are valid; `dirfd` is ignored for absolute paths.
+  let combined_flags_rc = unsafe {
+    fstatat(
+      -1,
+      missing_path_c.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(combined_flags_rc, -1);
+  assert_eq!(read_errno(), ENOENT);
+}
+
+#[test]
 fn fstatat_absolute_missing_path_ignores_non_directory_dirfd() {
   let temp_dir = TempDir::new();
   let non_directory_path = temp_dir.path().join("not_a_directory_fd.txt");
@@ -1483,6 +1523,30 @@ fn fstatat_relative_dirfd_missing_path_with_empty_path_flag_sets_enoent() {
       missing_name.as_ptr(),
       &raw mut stat_buf,
       AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(rc, -1);
+  assert_eq!(read_errno(), ENOENT);
+}
+
+#[test]
+fn fstatat_relative_dirfd_missing_path_with_empty_path_and_nofollow_sets_enoent() {
+  let temp_dir = TempDir::new();
+  let missing_name =
+    CString::new("missing-entry-with-empty-flag-nofollow.txt").expect("CString::new failed");
+  let dir = File::open(temp_dir.path()).expect("failed to open directory fd");
+  let mut stat_buf = Stat::default();
+
+  write_errno(EINVAL);
+
+  // SAFETY: `dirfd` is valid and pointers reference live C strings/output buffers.
+  let rc = unsafe {
+    fstatat(
+      dir.as_raw_fd(),
+      missing_name.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
     )
   };
 

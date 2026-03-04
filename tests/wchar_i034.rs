@@ -831,6 +831,43 @@ fn wcrtomb_non_null_destination_rejects_reserved_state_and_resets_for_next_call(
 }
 
 #[test]
+fn wcrtomb_non_null_destination_rejects_second_reserved_byte_state_and_resets_for_next_call() {
+  let mut state = mbstate_t::new();
+  let mut out = [0x55_u8; 4];
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[1]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 0, 1];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(0);
+  // SAFETY: output buffer and state pointers are valid.
+  let first = unsafe {
+    wcrtomb(
+      out.as_mut_ptr().cast::<c_char>(),
+      wchar_t::from(b'A'),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(out[0], 0x55);
+
+  set_errno(0);
+  // SAFETY: output buffer and state pointers are valid.
+  let second = unsafe {
+    wcrtomb(
+      out.as_mut_ptr().cast::<c_char>(),
+      wchar_t::from(b'A'),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(second, sz(1));
+  assert_eq!(out[0], b'A');
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
 fn wcrtomb_non_null_destination_rejects_pending_state_and_resets_for_next_call() {
   let prefix = [0xE3_u8, 0x81];
   let suffix = [0x82_u8, 0_u8];
@@ -1570,6 +1607,78 @@ fn mbsrtowcs_null_dst_reserved_state_sets_eilseq_and_resets_for_next_call() {
   let mut state = mbstate_t::new();
   // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[0]=1.
   let reserved = [0_u8, 0, 0, 0, 0, 0, 1, 0];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(0);
+
+  // SAFETY: pointers are valid and input is NUL-terminated.
+  let first = unsafe { mbsrtowcs(ptr::null_mut(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(first, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(src, original);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and input is NUL-terminated.
+  let second = unsafe { mbsrtowcs(ptr::null_mut(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(second, sz(1));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn mbsrtowcs_reserved_second_byte_state_sets_eilseq_and_resets_for_next_call() {
+  let input = b"A\0";
+  let mut src = input.as_ptr().cast::<c_char>();
+  let original = src;
+  let mut state = mbstate_t::new();
+  let mut dst = [0_i32; 2];
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[1]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 0, 1];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(0);
+
+  // SAFETY: pointers are valid and input is NUL-terminated.
+  let first = unsafe {
+    mbsrtowcs(
+      dst.as_mut_ptr(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(src, original);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and input is NUL-terminated.
+  let second = unsafe {
+    mbsrtowcs(
+      dst.as_mut_ptr(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(second, sz(1));
+  assert_eq!(dst[0], i32::from(b'A'));
+  assert!(src.is_null());
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn mbsrtowcs_null_dst_reserved_second_byte_state_sets_eilseq_and_resets_for_next_call() {
+  let input = b"A\0";
+  let mut src = input.as_ptr().cast::<c_char>();
+  let original = src;
+  let mut state = mbstate_t::new();
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[1]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 0, 1];
 
   write_state_bytes(&mut state, reserved);
   set_errno(0);
@@ -2472,6 +2581,50 @@ fn wcsrtombs_reserved_state_with_valid_wchar_sets_eilseq_and_resets_for_next_cal
   let mut dst = [0_u8; 8];
   // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[0]=1.
   let reserved = [0_u8, 0, 0, 0, 0, 0, 1, 0];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(0);
+
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let first = unsafe {
+    wcsrtombs(
+      dst.as_mut_ptr().cast::<c_char>(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(src, original);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let second = unsafe {
+    wcsrtombs(
+      dst.as_mut_ptr().cast::<c_char>(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(second, sz(1));
+  assert_eq!(&dst[..2], b"A\0");
+  assert!(src.is_null());
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn wcsrtombs_second_reserved_byte_state_with_valid_wchar_sets_eilseq_and_resets_for_next_call() {
+  let input = [i32::from(b'A'), 0_i32];
+  let mut src = input.as_ptr();
+  let original = src;
+  let mut state = mbstate_t::new();
+  let mut dst = [0_u8; 8];
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[1]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 0, 1];
 
   write_state_bytes(&mut state, reserved);
   set_errno(0);

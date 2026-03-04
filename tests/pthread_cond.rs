@@ -837,6 +837,49 @@ fn pthread_cond_wait_wakes_after_signal_with_recursive_mutex() {
 }
 
 #[test]
+fn pthread_cond_wait_wakes_after_signal_with_zero_initialized_cond_and_recursive_mutex() {
+  let mut mutex = init_recursive_mutex();
+  let mut cond = pthread_cond_t::default();
+  let ready = Arc::new(AtomicBool::new(false));
+  let observed = Arc::new(AtomicBool::new(false));
+  let mutex_addr = (&raw mut mutex).addr();
+  let cond_addr = (&raw mut cond).addr();
+  let (started_tx, started_rx) = mpsc::channel();
+  let waiter_ready = Arc::clone(&ready);
+  let waiter_observed = Arc::clone(&observed);
+  let waiter = thread::spawn(move || {
+    let mutex_ptr = mutex_addr as *mut pthread_mutex_t;
+    let cond_ptr = cond_addr as *mut pthread_cond_t;
+
+    assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+    started_tx
+      .send(())
+      .expect("failed to send waiter start signal");
+
+    while !waiter_ready.load(Ordering::Acquire) {
+      assert_eq!(pthread_cond_wait(cond_ptr, mutex_ptr), 0);
+    }
+
+    waiter_observed.store(true, Ordering::Release);
+    assert_eq!(pthread_mutex_unlock(mutex_ptr), 0);
+  });
+
+  started_rx.recv().expect("waiter did not start");
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  ready.store(true, Ordering::Release);
+  assert_eq!(pthread_cond_signal(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+
+  waiter.join().expect("waiter thread panicked");
+  assert!(
+    observed.load(Ordering::Acquire),
+    "zero-initialized recursive wait waiter must observe signaled condition",
+  );
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_destroy(&raw mut mutex), 0);
+}
+
+#[test]
 fn pthread_cond_signal_and_broadcast_accept_zero_initialized_cond() {
   let mut cond = pthread_cond_t::default();
 
@@ -1438,6 +1481,43 @@ fn pthread_mutex_destroy_returns_ebusy_while_cond_waiter_references_mutex() {
 
   waiter.join().expect("waiter thread panicked");
   destroy_sync_objects(&mut mutex, &mut cond);
+}
+
+#[test]
+fn pthread_mutex_destroy_returns_ebusy_while_zero_initialized_cond_waiter_references_mutex() {
+  let mut mutex = init_mutex();
+  let mut cond = pthread_cond_t::default();
+  let mutex_addr = (&raw mut mutex) as usize;
+  let cond_addr = (&raw mut cond) as usize;
+  let (started_tx, started_rx) = mpsc::channel();
+  let waiter = thread::spawn(move || {
+    let mutex_ptr = mutex_addr as *mut pthread_mutex_t;
+    let cond_ptr = cond_addr as *mut pthread_cond_t;
+
+    assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+    started_tx
+      .send(())
+      .expect("failed to send waiter start signal");
+    assert_eq!(pthread_cond_wait(cond_ptr, mutex_ptr), 0);
+    assert_eq!(pthread_mutex_unlock(mutex_ptr), 0);
+  });
+
+  started_rx.recv().expect("waiter did not start");
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+  assert_eq!(
+    pthread_mutex_destroy(&raw mut mutex),
+    EBUSY,
+    "destroy must fail while zero-initialized cond-wait keeps mutex referenced",
+  );
+
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(pthread_cond_signal(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+
+  waiter.join().expect("waiter thread panicked");
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_destroy(&raw mut mutex), 0);
 }
 
 #[test]

@@ -468,6 +468,45 @@ fn toascii_is_periodic_across_signed_128_step_offsets() {
 }
 
 #[test]
+fn toascii_periodicity_holds_near_c_int_extremes_without_overflow() {
+  let probes = [
+    c_int::MIN,
+    c_int::MIN + 1,
+    -4096,
+    -129,
+    -128,
+    -1,
+    0,
+    1,
+    127,
+    128,
+    255,
+    256,
+    4096,
+    c_int::MAX - 1,
+    c_int::MAX,
+  ];
+
+  for probe in probes {
+    if let Some(shifted_up) = probe.checked_add(128) {
+      assert_eq!(
+        toascii(shifted_up),
+        toascii(probe),
+        "toascii periodicity (+128) mismatch for probe={probe}, shifted={shifted_up}"
+      );
+    }
+
+    if let Some(shifted_down) = probe.checked_sub(128) {
+      assert_eq!(
+        toascii(shifted_down),
+        toascii(probe),
+        "toascii periodicity (-128) mismatch for probe={probe}, shifted={shifted_down}"
+      );
+    }
+  }
+}
+
+#[test]
 fn toascii_is_idempotent_across_dense_signed_range() {
   for probe in -4096..=4096 {
     let projected = toascii(probe);

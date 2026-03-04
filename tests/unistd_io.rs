@@ -1480,6 +1480,27 @@ fn send_invalid_fd_with_nosignal_and_dontwait_flags_returns_minus_one_and_errno_
 }
 
 #[test]
+fn send_invalid_fd_with_zero_length_and_nosignal_and_dontwait_flags_returns_minus_one_and_errno_ebadf()
+ {
+  let payload = [0x15_u8];
+
+  set_errno(0);
+
+  // SAFETY: payload pointer is valid and fd is intentionally invalid.
+  let sent = unsafe {
+    send(
+      -1,
+      payload.as_ptr().cast::<c_void>(),
+      sz(0),
+      MSG_NOSIGNAL | MSG_DONTWAIT,
+    )
+  };
+
+  assert_eq!(sent, -1);
+  assert_eq!(errno_value(), EBADF);
+}
+
+#[test]
 fn recv_invalid_fd_returns_minus_one_and_errno_ebadf() {
   let mut payload = [0x22_u8];
 
@@ -1571,6 +1592,41 @@ fn recv_invalid_fd_with_waitall_flag_returns_minus_one_and_errno_ebadf() {
   assert_eq!(received, -1);
   assert_eq!(errno_value(), EBADF);
   assert_eq!(byte, [0x24_u8; 1]);
+}
+
+#[test]
+fn recv_invalid_fd_with_peek_flag_returns_minus_one_and_errno_ebadf() {
+  let mut byte = [0x26_u8; 1];
+
+  set_errno(0);
+
+  // SAFETY: `byte` is writable and fd is intentionally invalid.
+  let received = unsafe { recv(-1, byte.as_mut_ptr().cast::<c_void>(), sz(1), MSG_PEEK) };
+
+  assert_eq!(received, -1);
+  assert_eq!(errno_value(), EBADF);
+  assert_eq!(byte, [0x26_u8; 1]);
+}
+
+#[test]
+fn recv_invalid_fd_with_peek_and_dontwait_flags_returns_minus_one_and_errno_ebadf() {
+  let mut byte = [0x25_u8; 1];
+
+  set_errno(0);
+
+  // SAFETY: `byte` is writable and fd is intentionally invalid.
+  let received = unsafe {
+    recv(
+      -1,
+      byte.as_mut_ptr().cast::<c_void>(),
+      sz(byte.len()),
+      MSG_PEEK | MSG_DONTWAIT,
+    )
+  };
+
+  assert_eq!(received, -1);
+  assert_eq!(errno_value(), EBADF);
+  assert_eq!(byte, [0x25_u8; 1]);
 }
 
 #[test]

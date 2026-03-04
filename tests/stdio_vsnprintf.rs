@@ -1577,6 +1577,34 @@ fn count_conversion_multiple_writes_track_progress_per_conversion() {
 }
 
 #[test]
+fn count_conversion_includes_escaped_percent_in_written_lengths() {
+  let mut buffer = [0_u8; 16];
+  let mut first_count_n: c_int = -1;
+  let mut second_count_t: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(first_count_n).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(second_count_t).cast_const()),
+  ]);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"A%%B%nC%%D%tn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 6);
+  assert_eq!(&buffer[..7], b"A%BC%D\0");
+  assert_eq!(first_count_n, 3);
+  assert_eq!(second_count_t, 6);
+  assert_eq!(read_errno(), 0);
+}
+
+#[test]
 fn count_conversion_later_null_pointer_keeps_prior_successful_write() {
   let mut buffer = [b'Q'; 16];
   let mut first_count: c_int = -1;
@@ -1654,6 +1682,32 @@ fn count_conversion_later_null_pointer_with_tn_keeps_prior_successful_write() {
 }
 
 #[test]
+fn count_conversion_later_null_pointer_with_zn_keeps_prior_successful_write() {
+  let mut buffer = [b'Q'; 16];
+  let mut first_count_t: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(first_count_t).cast_const()),
+    0,
+  ]);
+
+  set_errno(0);
+  // SAFETY: first pointer is valid, second pointer is intentionally null for error-path coverage.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"ab%tnC%znZ\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(&buffer[..4], b"abC\0");
+  assert_eq!(first_count_t, 2);
+}
+
+#[test]
 fn count_conversion_later_unsupported_specifier_with_tn_keeps_prior_successful_write() {
   let mut buffer = [b'Q'; 16];
   let mut first_count_t: isize = -1;
@@ -1726,6 +1780,31 @@ fn count_conversion_later_dangling_percent_with_tn_keeps_prior_successful_write(
   assert_eq!(read_errno(), EINVAL);
   assert_eq!(&buffer[..3], b"ab\0");
   assert_eq!(first_count_t, 2);
+}
+
+#[test]
+fn count_conversion_later_dangling_percent_with_zn_keeps_prior_successful_write() {
+  let mut buffer = [b'Q'; 16];
+  let mut first_count_z: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![ptr_slot(
+    core::ptr::addr_of_mut!(first_count_z).cast_const(),
+  )]);
+
+  set_errno(0);
+  // SAFETY: `%zn` pointer is valid; trailing `%` intentionally triggers format error after `%zn`.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"ab%zn%\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(&buffer[..3], b"ab\0");
+  assert_eq!(first_count_z, 2);
 }
 
 #[test]

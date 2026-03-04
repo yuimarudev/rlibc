@@ -852,6 +852,58 @@ mod tests {
   }
 
   #[test]
+  fn putenv_rebind_collapses_duplicate_alias_entries() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let key = b"RLIBC_I017_PUTENV_REBIND_COLLAPSE";
+    let stale_entry = b"XLIBC_I017_PUTENV_REBIND_COLLAPSE=stale\0".to_vec();
+    let old_entry = b"RLIBC_I017_PUTENV_REBIND_COLLAPSE=old\0".to_vec();
+    let stale_addr = stale_entry.as_ptr() as usize;
+    let old_addr = old_entry.as_ptr() as usize;
+    let mut latest_entry = b"RLIBC_I017_PUTENV_REBIND_COLLAPSE=latest\0".to_vec();
+    let latest_addr = latest_entry.as_ptr() as usize;
+
+    remove_putenv_alias(key);
+
+    {
+      let mut aliases = super::putenv_alias_guard();
+
+      aliases.push(super::PutEnvAlias {
+        name: key.to_vec().into_boxed_slice(),
+        entry_addr: stale_addr,
+      });
+      aliases.push(super::PutEnvAlias {
+        name: key.to_vec().into_boxed_slice(),
+        entry_addr: old_addr,
+      });
+    }
+
+    // SAFETY: `latest_entry` points to a mutable NUL-terminated `NAME=VALUE` string.
+    assert_eq!(unsafe { putenv(latest_entry.as_mut_ptr().cast()) }, 0);
+
+    let matching: Vec<usize> = {
+      let aliases = super::putenv_alias_guard();
+
+      aliases
+        .iter()
+        .filter(|alias| alias.name.as_ref() == key)
+        .map(|alias| alias.entry_addr)
+        .collect()
+    };
+
+    assert_eq!(matching, vec![latest_addr]);
+
+    let value_ptr =
+      lookup_putenv_alias_value(key).expect("lookup should resolve latest putenv alias value");
+    // SAFETY: `value_ptr` points into `latest_entry` NUL-terminated buffer.
+    let value = unsafe { CStr::from_ptr(value_ptr.cast_const()) };
+
+    assert_eq!(value.to_bytes(), b"latest");
+  }
+
+  #[test]
   fn host_env_unavailable_guard_is_nestable() {
     let _test_guard = match test_lock().lock() {
       Ok(guard) => guard,

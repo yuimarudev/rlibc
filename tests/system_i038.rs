@@ -124,6 +124,40 @@ fn uname_success_preserves_errno_sentinel() {
 }
 
 #[test]
+fn uname_repeated_success_keeps_errno_sentinel() {
+  let mut first = UtsName {
+    sysname: [0; 65],
+    nodename: [0; 65],
+    release: [0; 65],
+    version: [0; 65],
+    machine: [0; 65],
+    domainname: [0; 65],
+  };
+  let mut second = UtsName {
+    sysname: [0; 65],
+    nodename: [0; 65],
+    release: [0; 65],
+    version: [0; 65],
+    machine: [0; 65],
+    domainname: [0; 65],
+  };
+
+  write_errno(512);
+
+  let first_result = unsafe { uname(&raw mut first) };
+  let first_errno = read_errno();
+  let second_result = unsafe { uname(&raw mut second) };
+  let second_errno = read_errno();
+
+  assert_eq!(first_result, 0);
+  assert_eq!(second_result, 0);
+  assert_eq!(first_errno, 512);
+  assert_eq!(second_errno, 512);
+  assert!(!c_field_bytes(&first.sysname).is_empty());
+  assert!(!c_field_bytes(&second.sysname).is_empty());
+}
+
+#[test]
 fn uname_invalid_pointer_sets_efault() {
   write_errno(0);
 
@@ -712,6 +746,28 @@ fn sysinfo_writes_snapshot_and_preserves_errno_on_success() {
   assert!(info.mem_unit > 0);
   assert!(info.totalram > 0);
   assert!(info.uptime >= 0);
+}
+
+#[test]
+fn sysinfo_repeated_success_keeps_errno_sentinel() {
+  // SAFETY: zero is valid for this C struct because all fields are integer scalars.
+  let mut first_info: SysInfo = unsafe { mem::zeroed() };
+  // SAFETY: zero is valid for this C struct because all fields are integer scalars.
+  let mut second_info: SysInfo = unsafe { mem::zeroed() };
+
+  write_errno(271);
+
+  let first = unsafe { sysinfo(&raw mut first_info) };
+  let first_errno = read_errno();
+  let second = unsafe { sysinfo(&raw mut second_info) };
+  let second_errno = read_errno();
+
+  assert_eq!(first, 0);
+  assert_eq!(second, 0);
+  assert_eq!(first_errno, 271);
+  assert_eq!(second_errno, 271);
+  assert!(first_info.mem_unit > 0);
+  assert!(second_info.mem_unit > 0);
 }
 
 #[test]

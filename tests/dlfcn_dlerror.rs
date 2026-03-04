@@ -1521,6 +1521,10 @@ fn dlerror_reports_dlopen_missing_path_failure() {
     "unexpected dlerror message: {message}",
   );
   assert!(
+    message.contains("rlibc_i055_dlopen_missing_path.so"),
+    "missing-path dlerror should include path detail text: {message}",
+  );
+  assert!(
     take_dlerror_message().is_none(),
     "second dlerror call must clear pending state",
   );

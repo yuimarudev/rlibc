@@ -1011,6 +1011,18 @@ fn quality_gate_script_usage_mentions_continue_on_fail_equals_style_rejection() 
 }
 
 #[test]
+fn quality_gate_script_usage_mentions_duplicate_option_rejection() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let required_snippet =
+    "duplicate options are rejected (for example: repeated --profile or --continue-on-fail)";
+
+  assert!(
+    script.contains(required_snippet),
+    "usage/options contract must mention duplicate-option rejection: {required_snippet}"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_mentions_continue_on_fail_equals_style_rejection_once() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let occurrence_count = script
@@ -1038,6 +1050,32 @@ fn quality_gate_script_usage_lists_continue_on_fail_rejection_after_option_line(
   assert!(
     option_index < rejection_index,
     "usage must list continue-on-fail equals-style rejection after the option line for readable grouping"
+  );
+}
+
+#[test]
+fn quality_gate_script_usage_lists_continue_on_fail_default_after_rejection() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let option_line = "--continue-on-fail  keep running remaining profile steps and exit non-zero at end if any step failed (flag only; no value)";
+  let rejection_line = "equals-style values are rejected (for example: --continue-on-fail=1)";
+  let default_line = "default: stop on first failed step";
+  let option_index = script.find(option_line).unwrap_or_else(|| {
+    panic!("usage must contain continue-on-fail option contract line: {option_line}")
+  });
+  let rejection_index = script.find(rejection_line).unwrap_or_else(|| {
+    panic!("usage must contain continue-on-fail equals-style rejection line: {rejection_line}")
+  });
+  let default_index = script.find(default_line).unwrap_or_else(|| {
+    panic!("usage must contain continue-on-fail default behavior line: {default_line}")
+  });
+
+  assert!(
+    rejection_index < default_index,
+    "usage must list continue-on-fail default behavior after equals-style rejection guidance"
+  );
+  assert!(
+    option_index < default_index,
+    "usage must list continue-on-fail default behavior after the option line"
   );
 }
 
@@ -1071,10 +1109,18 @@ fn quality_gate_script_usage_describes_profile_option_contract() {
 fn quality_gate_script_usage_lists_profile_option_before_continue_on_fail_option() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let profile_option = "--profile <pr|nightly|full>  select quality-gate profile";
+  let profile_equals_style_support = "supports --profile <value> and --profile=<value> forms";
   let continue_on_fail_option = "--continue-on-fail  keep running remaining profile steps and exit non-zero at end if any step failed (flag only; no value)";
   let profile_index = script
     .find(profile_option)
     .unwrap_or_else(|| panic!("usage must contain profile option contract line: {profile_option}"));
+  let profile_equals_style_support_index = script
+    .find(profile_equals_style_support)
+    .unwrap_or_else(|| {
+      panic!(
+        "usage must contain profile equals-style support contract line: {profile_equals_style_support}"
+      )
+    });
   let continue_on_fail_index = script.find(continue_on_fail_option).unwrap_or_else(|| {
     panic!("usage must contain continue-on-fail option contract line: {continue_on_fail_option}")
   });
@@ -1082,6 +1128,14 @@ fn quality_gate_script_usage_lists_profile_option_before_continue_on_fail_option
   assert!(
     profile_index < continue_on_fail_index,
     "usage must list profile selector before continue-on-fail option to keep option help scan order stable"
+  );
+  assert!(
+    profile_index < profile_equals_style_support_index,
+    "usage must list profile equals-style support after the profile option line for readable grouping"
+  );
+  assert!(
+    profile_equals_style_support_index < continue_on_fail_index,
+    "usage must keep profile guidance grouped before continue-on-fail option line"
   );
 }
 
@@ -1385,6 +1439,8 @@ fn command_uses_supported_runtest_prefix_rejects_invalid_workload_paths_for_bin_
     "/functional/argv",
     "./functional/argv",
     "../functional/argv",
+    ".",
+    "..",
     "functional/./argv",
     "functional/.",
     "functional//argv",
@@ -1410,6 +1466,8 @@ fn command_uses_supported_runtest_prefix_rejects_invalid_workload_paths_for_dot_
     "/functional/argv",
     "./functional/argv",
     "../functional/argv",
+    ".",
+    "..",
     "functional/./argv",
     "functional/.",
     "functional//argv",
@@ -1433,6 +1491,8 @@ fn command_uses_supported_runtest_prefix_rejects_invalid_workload_paths_for_bare
     "/functional/argv",
     "./functional/argv",
     "../functional/argv",
+    ".",
+    "..",
     "functional/./argv",
     "functional/.",
     "functional//argv",

@@ -767,6 +767,136 @@ fn memmove_matches_copy_within_for_u64_all_in_bounds_byte_ranges() {
 }
 
 #[test]
+fn memmove_unaligned_u128_word_boundary_lengths_match_copy_within() {
+  let original = [
+    0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f_u128,
+    0x1011_1213_1415_1617_1819_1a1b_1c1d_1e1f,
+    0x2021_2223_2425_2627_2829_2a2b_2c2d_2e2f,
+    0x3031_3233_3435_3637_3839_3a3b_3c3d_3e3f,
+    0x4041_4243_4445_4647_4849_4a4b_4c4d_4e4f,
+    0x5051_5253_5455_5657_5859_5a5b_5c5d_5e5f,
+  ];
+  let total_bytes = core::mem::size_of_val(&original);
+  let cases = [
+    (1usize, 17usize, 15usize),
+    (1, 17, 16),
+    (1, 17, 17),
+    (17, 1, 15),
+    (17, 1, 16),
+    (17, 1, 17),
+    (3, 35, 31),
+    (3, 35, 32),
+    (3, 35, 33),
+    (35, 3, 31),
+    (35, 3, 32),
+    (35, 3, 33),
+  ];
+
+  for (source_offset, destination_offset, copy_len) in cases {
+    assert!(source_offset + copy_len <= total_bytes);
+    assert!(destination_offset + copy_len <= total_bytes);
+
+    let mut actual = original;
+    let mut expected = original;
+
+    // SAFETY: Arrays are live and converted to byte slices of exact in-bounds length.
+    unsafe {
+      let expected_bytes = core::slice::from_raw_parts_mut(
+        expected.as_mut_ptr().cast::<u8>(),
+        core::mem::size_of_val(&expected),
+      );
+      expected_bytes.copy_within(source_offset..source_offset + copy_len, destination_offset);
+    }
+
+    let destination = actual
+      .as_mut_ptr()
+      .cast::<u8>()
+      .wrapping_add(destination_offset);
+    let source = actual.as_ptr().cast::<u8>().wrapping_add(source_offset);
+    // SAFETY: case table and assertions above guarantee in-bounds access.
+    let returned = unsafe { memmove(destination.cast(), source.cast(), sz(copy_len)) }.cast();
+
+    assert_eq!(
+      returned, destination,
+      "unexpected return pointer for src={source_offset}, dst={destination_offset}, len={copy_len}",
+    );
+    assert_eq!(
+      actual, expected,
+      "unexpected u128 bytes for src={source_offset}, dst={destination_offset}, len={copy_len}",
+    );
+  }
+}
+
+#[test]
+fn memmove_non_overlapping_unaligned_non_byte_ranges_match_copy_from_slice() {
+  let cases = [
+    (0usize, 0usize, 24usize),
+    (1, 2, 17),
+    (3, 5, 12),
+    (7, 1, 9),
+    (5, 8, 8),
+  ];
+
+  for (source_offset, destination_offset, copy_len) in cases {
+    let source = [
+      0x1122_3344_u32,
+      0x5566_7788,
+      0x99aa_bbcc,
+      0xddee_ff00,
+      0x1357_9bdf,
+      0x2468_ace0,
+    ];
+    let source_before = source;
+    let mut actual_destination = [
+      0xa1a2_a3a4_u32,
+      0xb1b2_b3b4,
+      0xc1c2_c3c4,
+      0xd1d2_d3d4,
+      0xe1e2_e3e4,
+      0xf1f2_f3f4,
+    ];
+    let mut expected_destination = actual_destination;
+
+    let source_total_bytes = core::mem::size_of_val(&source);
+    let destination_total_bytes = core::mem::size_of_val(&actual_destination);
+    assert!(source_offset + copy_len <= source_total_bytes);
+    assert!(destination_offset + copy_len <= destination_total_bytes);
+
+    // SAFETY: source/destination arrays are live and range checks above ensure in-bounds slices.
+    unsafe {
+      let source_bytes =
+        core::slice::from_raw_parts(source.as_ptr().cast::<u8>().add(source_offset), copy_len);
+      let expected_destination_bytes = core::slice::from_raw_parts_mut(
+        expected_destination
+          .as_mut_ptr()
+          .cast::<u8>()
+          .add(destination_offset),
+        copy_len,
+      );
+      expected_destination_bytes.copy_from_slice(source_bytes);
+    }
+
+    let destination = actual_destination
+      .as_mut_ptr()
+      .cast::<u8>()
+      .wrapping_add(destination_offset);
+    let source_ptr = source.as_ptr().cast::<u8>().wrapping_add(source_offset);
+    // SAFETY: pointers are derived from live arrays and bounded by the checks above.
+    let returned = unsafe { memmove(destination.cast(), source_ptr.cast(), sz(copy_len)) }.cast();
+
+    assert_eq!(
+      returned, destination,
+      "unexpected return pointer for src={source_offset}, dst={destination_offset}, len={copy_len}",
+    );
+    assert_eq!(
+      actual_destination, expected_destination,
+      "unexpected destination bytes for src={source_offset}, dst={destination_offset}, len={copy_len}",
+    );
+    assert_eq!(source, source_before, "source buffer mutated unexpectedly");
+  }
+}
+
+#[test]
 fn memmove_adjacent_forward_boundary_copies_as_non_overlap() {
   let mut buffer = [0_u8, 1, 2, 3, 4, 5];
   let source = buffer.as_ptr();
@@ -1148,6 +1278,18 @@ fn memcpy_zero_length_allows_distinct_live_pointers_without_mutation() {
 }
 
 #[test]
+fn memcpy_zero_length_allows_same_live_pointer_with_distinct_alignment_origin() {
+  let mut buffer_words = [91_u32, 92, 93];
+  let pointer = buffer_words.as_mut_ptr().wrapping_add(1).cast::<u8>();
+  let before = buffer_words;
+  // SAFETY: `n == 0`, so the pointer is never dereferenced.
+  let returned = unsafe { memcpy(pointer.cast(), pointer.cast_const().cast(), sz(0)) }.cast::<u8>();
+
+  assert_eq!(returned, pointer);
+  assert_eq!(buffer_words, before);
+}
+
+#[test]
 fn memcpy_zero_length_allows_mixed_null_and_non_null_pointers() {
   let mut destination = [7_u8];
   let destination_ptr = destination.as_mut_ptr();
@@ -1162,6 +1304,26 @@ fn memcpy_zero_length_allows_mixed_null_and_non_null_pointers() {
   assert_eq!(returned_non_null_destination, destination_ptr);
   assert_eq!(returned_null_destination, core::ptr::null_mut());
   assert_eq!(destination, [7_u8]);
+}
+
+#[test]
+fn memcpy_zero_length_allows_mixed_null_and_live_with_distinct_alignments() {
+  let mut destination_words = [7_u16, 8, 9];
+  let source_words = [1_u32, 2, 3];
+  let destination_ptr = destination_words.as_mut_ptr().wrapping_add(1).cast::<u8>();
+  let source_ptr = source_words.as_ptr().wrapping_add(1).cast::<u8>();
+  let destination_before = destination_words;
+  // SAFETY: `n == 0`, so source is never dereferenced.
+  let returned_non_null_destination =
+    unsafe { memcpy(destination_ptr.cast(), core::ptr::null(), sz(0)) }.cast::<u8>();
+  // SAFETY: `n == 0`, so destination is never dereferenced.
+  let returned_null_destination =
+    unsafe { memcpy(core::ptr::null_mut(), source_ptr.cast(), sz(0)) }.cast::<u8>();
+
+  assert_eq!(returned_non_null_destination, destination_ptr);
+  assert_eq!(returned_null_destination, core::ptr::null_mut());
+  assert_eq!(destination_words, destination_before);
+  assert_eq!(source_words, [1_u32, 2, 3]);
 }
 
 #[test]

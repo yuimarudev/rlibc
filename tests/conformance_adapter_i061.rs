@@ -1614,6 +1614,71 @@ fn adapter_rejects_missing_parent_results_file_invalidated_by_suite_root_overrid
 }
 
 #[test]
+fn adapter_rejects_missing_parent_results_file_invalidated_by_suite_root_override_before_later_unknown_argument()
+ {
+  let temp_dir =
+    TempDirGuard::new("i061-missing-parent-results-invalidated-by-suite-root-before-unknown");
+  let first_suite_root = temp_dir.path().join("suite-root-a");
+  let second_suite_root = temp_dir.path().join("suite-root-b");
+  let missing_parent_results_under_first =
+    first_suite_root.join("missing-parent/results/ltp-results-a.txt");
+  let valid_results_under_second = second_suite_root.join("results/ltp-results-b.txt");
+  let marker = temp_dir.path().join(
+    "suite-command-ran-missing-parent-results-invalidated-by-suite-root-before-unknown.marker",
+  );
+
+  fs::create_dir_all(&first_suite_root).unwrap_or_else(|error| {
+    panic!(
+      "failed to create first suite root {}: {error}",
+      first_suite_root.display()
+    )
+  });
+  fs::create_dir_all(&second_suite_root).unwrap_or_else(|error| {
+    panic!(
+      "failed to create second suite root {}: {error}",
+      second_suite_root.display()
+    )
+  });
+  write_text(&valid_results_under_second, "PASS root.b.valid.case\n");
+
+  let arguments = vec![
+    "--suite".to_string(),
+    "ltp".to_string(),
+    "--results-file".to_string(),
+    missing_parent_results_under_first
+      .to_string_lossy()
+      .into_owned(),
+    "--suite-root".to_string(),
+    first_suite_root.to_string_lossy().into_owned(),
+    "--suite-root".to_string(),
+    second_suite_root.to_string_lossy().into_owned(),
+    "--results-file".to_string(),
+    valid_results_under_second.to_string_lossy().into_owned(),
+    "--unknown-after-suite-root-override".to_string(),
+    "--".to_string(),
+    "touch".to_string(),
+    marker.to_string_lossy().into_owned(),
+  ];
+  let output = run_adapter(&arguments);
+  let stderr = stderr_text(&output);
+
+  assert!(!output.status.success());
+  assert!(stderr.contains("results file must be inside suite root"));
+  assert!(
+    !stderr.contains("unknown argument"),
+    "missing-parent invalidation error should win over later unknown argument"
+  );
+  assert!(
+    !marker.exists(),
+    "suite command must not run when missing-parent results-file is invalidated by suite-root override"
+  );
+  assert!(
+    !missing_parent_results_under_first.exists(),
+    "invalidated missing-parent results-file path must not be created by suite command"
+  );
+}
+
+#[test]
 fn adapter_rejects_results_file_with_dotdot_segments_before_running_suite_command() {
   let temp_dir = TempDirGuard::new("i061-results-dotdot-segments");
   let suite_root = temp_dir.path().join("suite-root");
@@ -2039,6 +2104,65 @@ fn adapter_rejects_symlinked_results_file_even_when_later_results_file_is_valid(
 
   assert!(!output.status.success());
   assert!(stderr.contains("results file must not be a symlink"));
+  assert!(
+    !marker.exists(),
+    "suite command must not run when any --results-file value is a symlink"
+  );
+}
+
+#[test]
+fn adapter_rejects_symlinked_results_file_even_when_later_results_file_is_valid_and_before_later_unknown_argument()
+ {
+  let temp_dir =
+    TempDirGuard::new("i061-results-symlink-file-even-when-later-valid-before-unknown");
+  let suite_root = temp_dir.path().join("suite-root");
+  let suite_results = suite_root.join("results");
+  let symlink_results = suite_results.join("ltp-results.txt");
+  let external_results = temp_dir.path().join("external-results.txt");
+  let valid_results = suite_results.join("valid-ltp-results.txt");
+  let marker = temp_dir
+    .path()
+    .join("suite-command-ran-symlink-file-even-when-later-valid-before-unknown.marker");
+
+  fs::create_dir_all(&suite_results).unwrap_or_else(|error| {
+    panic!(
+      "failed to create suite results directory {}: {error}",
+      suite_results.display()
+    )
+  });
+  write_text(&external_results, "PASS external.case\n");
+  write_text(&valid_results, "PASS valid.case\n");
+  symlink(&external_results, &symlink_results).unwrap_or_else(|error| {
+    panic!(
+      "failed to create symlink {} -> {}: {error}",
+      symlink_results.display(),
+      external_results.display()
+    )
+  });
+
+  let arguments = vec![
+    "--suite".to_string(),
+    "ltp".to_string(),
+    "--suite-root".to_string(),
+    suite_root.to_string_lossy().into_owned(),
+    "--results-file".to_string(),
+    symlink_results.to_string_lossy().into_owned(),
+    "--results-file".to_string(),
+    valid_results.to_string_lossy().into_owned(),
+    "--unknown-after-invalid-results-file".to_string(),
+    "--".to_string(),
+    "touch".to_string(),
+    marker.to_string_lossy().into_owned(),
+  ];
+  let output = run_adapter(&arguments);
+  let stderr = stderr_text(&output);
+
+  assert!(!output.status.success());
+  assert!(stderr.contains("results file must not be a symlink"));
+  assert!(
+    !stderr.contains("unknown argument"),
+    "results-file symlink validation should win over later unknown argument"
+  );
   assert!(
     !marker.exists(),
     "suite command must not run when any --results-file value is a symlink"

@@ -275,6 +275,54 @@ fn printf_mixed_count_conversions_track_progress_per_conversion() {
 }
 
 #[test]
+fn printf_mixed_count_conversions_success_does_not_clobber_errno() {
+  let format = c_string("A%nB%jnC%tn");
+  let mut count_n: c_int = -1;
+  let mut count_j: i64 = -1;
+  let mut count_t: isize = -1;
+  let sentinel_errno = 1234_i32;
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: variadic arguments match `%n`/`%jn`/`%tn` pointer contracts in order.
+  let written = unsafe {
+    printf(
+      format.as_ptr(),
+      core::ptr::addr_of_mut!(count_n),
+      core::ptr::addr_of_mut!(count_j),
+      core::ptr::addr_of_mut!(count_t),
+    )
+  };
+
+  assert_eq!(written, 3);
+  assert_eq!(count_n, 1);
+  assert_eq!(count_j, 2);
+  assert_eq!(count_t, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+}
+
+#[test]
+fn printf_later_null_pointer_keeps_prior_successful_count_write() {
+  let format = c_string("%n%n");
+  let mut count = -1_i32;
+
+  write_errno(0);
+
+  // SAFETY: first `%n` gets a valid `int*`; second null pointer must be rejected.
+  let written = unsafe {
+    printf(
+      format.as_ptr(),
+      core::ptr::addr_of_mut!(count),
+      core::ptr::null_mut::<c_int>(),
+    )
+  };
+
+  assert_eq!(written, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(count, 0);
+}
+
+#[test]
 fn printf_percent_n_success_does_not_clobber_errno() {
   let format = c_string("%s%n");
   let payload = c_string("abc");
@@ -425,6 +473,22 @@ fn printf_percent_hn_success_does_not_clobber_errno() {
 
   assert_eq!(written, 3);
   assert_eq!(count, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+}
+
+#[test]
+fn printf_percent_hn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%hn");
+  let mut count: i16 = -1;
+  let sentinel_errno = 1234_i32;
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: `%hn` receives a valid mutable `short*`.
+  let written = unsafe { printf(format.as_ptr(), core::ptr::addr_of_mut!(count)) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
   assert_eq!(read_errno(), sentinel_errno);
 }
 
@@ -794,6 +858,47 @@ fn vprintf_mixed_count_conversions_track_progress_per_conversion() {
 }
 
 #[test]
+fn vprintf_mixed_count_conversions_success_does_not_clobber_errno() {
+  let format = c_string("A%nB%jnC%tn");
+  let mut count_n: c_int = -1;
+  let mut count_j: i64 = -1;
+  let mut count_t: isize = -1;
+  let sentinel_errno = 1234_i32;
+  let mut args = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(count_n)),
+    ptr_slot(core::ptr::addr_of_mut!(count_j)),
+    ptr_slot(core::ptr::addr_of_mut!(count_t)),
+  ]);
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: va_list slots satisfy `%n`/`%jn`/`%tn` pointer contracts in order.
+  let written = unsafe { vprintf(format.as_ptr(), args.as_mut_ptr()) };
+
+  assert_eq!(written, 3);
+  assert_eq!(count_n, 1);
+  assert_eq!(count_j, 2);
+  assert_eq!(count_t, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+}
+
+#[test]
+fn vprintf_later_null_pointer_keeps_prior_successful_count_write() {
+  let format = c_string("%n%n");
+  let mut count = -1_i32;
+  let mut args = OwnedVaList::from_u64_slots(vec![ptr_slot(core::ptr::addr_of_mut!(count)), 0]);
+
+  write_errno(0);
+
+  // SAFETY: first `%n` receives a valid `int*`; second null pointer must be rejected.
+  let written = unsafe { vprintf(format.as_ptr(), args.as_mut_ptr()) };
+
+  assert_eq!(written, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(count, 0);
+}
+
+#[test]
 fn vprintf_percent_n_success_does_not_clobber_errno() {
   let format = c_string("%s%n");
   let payload = c_string("abc");
@@ -933,6 +1038,23 @@ fn vprintf_percent_hn_success_does_not_clobber_errno() {
 
   assert_eq!(written, 3);
   assert_eq!(count, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+}
+
+#[test]
+fn vprintf_percent_hn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%hn");
+  let mut count: i16 = -1;
+  let sentinel_errno = 1234_i32;
+  let mut args = OwnedVaList::from_u64_slots(vec![ptr_slot(core::ptr::addr_of_mut!(count))]);
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: va_list slots satisfy `%hn` contract (`short*`).
+  let written = unsafe { vprintf(format.as_ptr(), args.as_mut_ptr()) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
   assert_eq!(read_errno(), sentinel_errno);
 }
 
@@ -1663,6 +1785,66 @@ fn vfprintf_mixed_count_conversions_track_progress_per_conversion() {
 }
 
 #[test]
+fn vfprintf_mixed_count_conversions_success_does_not_clobber_errno() {
+  let format = c_string("A%nB%jnC%tn");
+  let mut count_n: c_int = -1;
+  let mut count_j: i64 = -1;
+  let mut count_t: isize = -1;
+  let sentinel_errno = 1234_i32;
+  let mut args = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(count_n)),
+    ptr_slot(core::ptr::addr_of_mut!(count_j)),
+    ptr_slot(core::ptr::addr_of_mut!(count_t)),
+  ]);
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: argument slots satisfy `%n`/`%jn`/`%tn` pointer contracts in order.
+  let written = unsafe { vfprintf(stream, format.as_ptr(), args.as_mut_ptr()) };
+
+  assert_eq!(written, 3);
+  assert_eq!(count_n, 1);
+  assert_eq!(count_j, 2);
+  assert_eq!(count_t, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
+fn vfprintf_later_null_pointer_keeps_prior_successful_count_write() {
+  let format = c_string("%n%n");
+  let mut count = -1_i32;
+  let mut args = OwnedVaList::from_u64_slots(vec![ptr_slot(core::ptr::addr_of_mut!(count)), 0]);
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(0);
+
+  // SAFETY: first `%n` gets valid `int*`; second null pointer must be rejected.
+  let written = unsafe { vfprintf(stream, format.as_ptr(), args.as_mut_ptr()) };
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+  assert_eq!(written, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(count, 0);
+}
+
+#[test]
 fn vfprintf_percent_n_success_does_not_clobber_errno() {
   let format = c_string("%s%n");
   let payload = c_string("abc");
@@ -1867,6 +2049,33 @@ fn vfprintf_percent_hn_success_does_not_clobber_errno() {
 
   assert_eq!(written, 3);
   assert_eq!(count, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
+fn vfprintf_percent_hn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%hn");
+  let mut count: i16 = -1;
+  let mut args = OwnedVaList::from_u64_slots(vec![ptr_slot(core::ptr::addr_of_mut!(count))]);
+  let sentinel_errno = 1234_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: argument slots satisfy `%hn` contract (`short*`).
+  let written = unsafe { vfprintf(stream, format.as_ptr(), args.as_mut_ptr()) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
   assert_eq!(read_errno(), sentinel_errno);
 
   // SAFETY: stream came from `tmpfile`.
@@ -2741,6 +2950,75 @@ fn fprintf_mixed_count_conversions_track_progress_per_conversion() {
 }
 
 #[test]
+fn fprintf_mixed_count_conversions_success_does_not_clobber_errno() {
+  let format = c_string("A%nB%jnC%tn");
+  let mut count_n: c_int = -1;
+  let mut count_j: i64 = -1;
+  let mut count_t: isize = -1;
+  let sentinel_errno = 1234_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: variadic arguments match `%n`/`%jn`/`%tn` pointer contracts in order.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr(),
+      core::ptr::addr_of_mut!(count_n),
+      core::ptr::addr_of_mut!(count_j),
+      core::ptr::addr_of_mut!(count_t),
+    )
+  };
+
+  assert_eq!(written, 3);
+  assert_eq!(count_n, 1);
+  assert_eq!(count_j, 2);
+  assert_eq!(count_t, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
+fn fprintf_later_null_pointer_keeps_prior_successful_count_write() {
+  let format = c_string("%n%n");
+  let mut count = -1_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(0);
+
+  // SAFETY: first `%n` gets valid `int*`; second null pointer must be rejected.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr(),
+      core::ptr::addr_of_mut!(count),
+      core::ptr::null_mut::<c_int>(),
+    )
+  };
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+  assert_eq!(written, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(count, 0);
+}
+
+#[test]
 fn fprintf_percent_n_success_does_not_clobber_errno() {
   let format = c_string("%s%n");
   let payload = c_string("abc");
@@ -2962,6 +3240,32 @@ fn fprintf_percent_hn_success_does_not_clobber_errno() {
 
   assert_eq!(written, 3);
   assert_eq!(count, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
+fn fprintf_percent_hn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%hn");
+  let mut count: i16 = -1;
+  let sentinel_errno = 1234_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: variadic arguments match `%hn` contract (`short*`).
+  let written = unsafe { fprintf(stream, format.as_ptr(), core::ptr::addr_of_mut!(count)) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
   assert_eq!(read_errno(), sentinel_errno);
 
   // SAFETY: stream came from `tmpfile`.

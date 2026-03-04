@@ -315,6 +315,19 @@ fn errno_constants_include_linux_legacy_tail_band() {
 }
 
 #[test]
+fn errno_linux_legacy_tail_band_preserves_step_sequence() {
+  assert_eq!(EUCLEAN, ESTALE + 1);
+  assert_eq!(ENOTNAM, EUCLEAN + 1);
+  assert_eq!(ENAVAIL, ENOTNAM + 1);
+  assert_eq!(EISNAM, ENAVAIL + 1);
+  assert_eq!(EREMOTEIO, EISNAM + 1);
+  assert_eq!(EDQUOT, EREMOTEIO + 1);
+  assert_eq!(ENOMEDIUM, EDQUOT + 1);
+  assert_eq!(EMEDIUMTYPE, ENOMEDIUM + 1);
+  assert_eq!(ECANCELED, EMEDIUMTYPE + 1);
+}
+
+#[test]
 fn errno_constants_cover_socket_error_band_edges() {
   assert_eq!(EUSERS, 87);
   assert_eq!(ENOTSOCK, 88);
@@ -343,4 +356,12 @@ fn errno_key_and_recovery_tail_preserves_linux_step_sequence() {
   assert_eq!(ENOTRECOVERABLE, EOWNERDEAD + 1);
   assert_eq!(ERFKILL, ENOTRECOVERABLE + 1);
   assert_eq!(EHWPOISON, ERFKILL + 1);
+}
+
+#[test]
+fn errno_linux_reserved_gaps_match_baseline_layout() {
+  assert_eq!(ENOMSG, ELOOP + 2);
+  assert_eq!(EBFONT, EBADSLT + 2);
+  assert_eq!(EDEADLK, ERANGE + 1);
+  assert_eq!(ENAMETOOLONG, EDEADLK + 1);
 }

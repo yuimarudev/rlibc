@@ -830,9 +830,8 @@ const fn normalize_alternative_modifier_token(modifier: u8, token: u8) -> Option
     },
     b'O' => match token {
       b'd' | b'e' | b'H' | b'I' | b'm' | b'M' | b'S' | b'u' | b'U' | b'V' | b'w' | b'W' | b'y'
-      | b'Y' | b'C' | b'G' | b'g' | b'k' | b'l' | b'p' | b'P' | b'R' | b'T' | b'r' | b'z' => {
-        Some(token)
-      }
+      | b'Y' | b'C' | b'G' | b'g' | b'j' | b'k' | b'l' | b'p' | b'P' | b'R' | b'T' | b'r'
+      | b'z' => Some(token),
       _ => None,
     },
     _ => None,
@@ -1422,7 +1421,7 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut timeval, tz: *mut timezone) -> c_
 /// - POSIX alternative modifiers `%E` and `%O` are accepted for their `C`
 ///   locale aliases and are normalized to the corresponding unmodified token:
 ///   `%Ec/%EC/%Ex/%EX/%Ey/%EY/%Ez/%Eu/%Er/%ER` and
-///   `%OC/%Od/%Oe/%OH/%OI/%Ok/%Ol/%Om/%OM/%OS/%Ou/%OU/%OV/%Ow/%OW/%Oy/%OY/%OG/%Og/%Op/%OP/%OR/%OT/%Or/%Oz`.
+///   `%OC/%Od/%Oe/%OH/%OI/%Oj/%Ok/%Ol/%Om/%OM/%OS/%Ou/%OU/%OV/%Ow/%OW/%Oy/%OY/%OG/%Og/%Op/%OP/%OR/%OT/%Or/%Oz`.
 ///   Unsupported combinations are emitted verbatim (for example `%Oq`).
 /// - `%e` expects `tm_mday` in `1..=31`; out-of-range values are emitted as
 ///   `?`.

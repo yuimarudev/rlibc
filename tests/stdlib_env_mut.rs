@@ -217,6 +217,41 @@ fn setenv_overwrite_i016_replaces_empty_putenv_alias_and_preserves_errno() {
 }
 
 #[test]
+fn setenv_overwrite_i016_replaces_rebound_empty_putenv_alias_and_preserves_errno() {
+  let _env = EnvScope::new();
+  let name = c_string("RLIBC_I016_SETENV_OVERWRITE_REBOUND_EMPTY_ALIAS_REPLACE");
+  let replacement = c_string("replacement");
+  let prefix = b"RLIBC_I016_SETENV_OVERWRITE_REBOUND_EMPTY_ALIAS_REPLACE=";
+  let mut first = b"RLIBC_I016_SETENV_OVERWRITE_REBOUND_EMPTY_ALIAS_REPLACE=alpha\0".to_vec();
+  let mut second = b"RLIBC_I016_SETENV_OVERWRITE_REBOUND_EMPTY_ALIAS_REPLACE=\0\0".to_vec();
+
+  write_errno(69);
+
+  // SAFETY: `first` is mutable and NUL-terminated for C.
+  let first_put_result = unsafe { putenv(first.as_mut_ptr().cast()) };
+  // SAFETY: `second` is mutable and NUL-terminated for C.
+  let second_put_result = unsafe { putenv(second.as_mut_ptr().cast()) };
+
+  assert_eq!(first_put_result, 0);
+  assert_eq!(second_put_result, 0);
+  assert_eq!(getenv_bytes(&name), Some(Vec::new()));
+
+  // SAFETY: `name` and `replacement` are valid NUL-terminated strings.
+  let set_result = unsafe { setenv(name.as_ptr(), replacement.as_ptr(), 1) };
+
+  assert_eq!(set_result, 0);
+  assert_eq!(getenv_bytes(&name), Some(b"replacement".to_vec()));
+
+  let value_start = prefix.len();
+
+  first[value_start..value_start + 5].copy_from_slice(b"omega");
+  second[value_start] = b'z';
+
+  assert_eq!(getenv_bytes(&name), Some(b"replacement".to_vec()));
+  assert_eq!(read_errno(), 69);
+}
+
+#[test]
 fn unsetenv_removes_entry() {
   let _env = EnvScope::new();
   let name = c_string("RLIBC_I017_UNSETENV");
@@ -1089,6 +1124,45 @@ fn setenv_no_overwrite_i016_keeps_empty_putenv_alias() {
 
   assert_eq!(getenv_bytes(&tracked_name), Some(b"z".to_vec()));
   assert_eq!(read_errno(), 53);
+}
+
+#[test]
+fn setenv_no_overwrite_i016_keeps_rebound_empty_putenv_alias() {
+  let _env = EnvScope::new();
+  let tracked_name = c_string("RLIBC_I016_SETENV_NO_OVERWRITE_REBOUND_EMPTY_ALIAS");
+  let replacement = c_string("replacement");
+  let prefix = b"RLIBC_I016_SETENV_NO_OVERWRITE_REBOUND_EMPTY_ALIAS=";
+  let mut first = b"RLIBC_I016_SETENV_NO_OVERWRITE_REBOUND_EMPTY_ALIAS=alpha\0".to_vec();
+  let mut second = b"RLIBC_I016_SETENV_NO_OVERWRITE_REBOUND_EMPTY_ALIAS=\0\0".to_vec();
+
+  write_errno(54);
+
+  // SAFETY: `first` is mutable and NUL-terminated for C.
+  let first_put_result = unsafe { putenv(first.as_mut_ptr().cast()) };
+  // SAFETY: `second` is mutable and NUL-terminated for C.
+  let second_put_result = unsafe { putenv(second.as_mut_ptr().cast()) };
+
+  assert_eq!(first_put_result, 0);
+  assert_eq!(second_put_result, 0);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  // SAFETY: pointers are valid NUL-terminated strings.
+  let set_result = unsafe { setenv(tracked_name.as_ptr(), replacement.as_ptr(), 0) };
+
+  assert_eq!(set_result, 0);
+  assert_eq!(read_errno(), 54);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  let value_start = prefix.len();
+
+  first[value_start..value_start + 5].copy_from_slice(b"omega");
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  second[value_start] = b'z';
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(b"z".to_vec()));
+  assert_eq!(read_errno(), 54);
 }
 
 #[test]

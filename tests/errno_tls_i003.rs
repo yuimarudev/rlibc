@@ -2724,3 +2724,121 @@ fn repeated_nested_rounds_keep_nested_and_fresh_child_zero_start() {
     );
   }
 }
+
+#[test]
+fn nested_thread_pointer_remains_stable_across_repeated_writes() {
+  const REPEATS: usize = 5;
+
+  write_errno(-111);
+
+  let main_slot = __errno_location() as usize;
+  let stem_report = thread::spawn(|| {
+    let stem_slot = __errno_location() as usize;
+    let stem_zero = read_errno();
+
+    write_errno(5151);
+
+    let bud_report = thread::spawn(|| {
+      let bud_slot = __errno_location() as usize;
+      let bud_zero = read_errno();
+      let mut slot_pairs = Vec::new();
+      let mut value_pairs = Vec::new();
+      let mut running = 9000_i32;
+
+      for _ in 0..REPEATS {
+        let left_ptr = __errno_location() as usize;
+        let before_errno = read_errno();
+
+        running += 1;
+        write_errno(running);
+
+        let right_ptr = __errno_location() as usize;
+        let after_errno = read_errno();
+
+        slot_pairs.push((left_ptr, right_ptr));
+        value_pairs.push((before_errno, after_errno));
+      }
+
+      (bud_slot, bud_zero, slot_pairs, value_pairs, running)
+    })
+    .join()
+    .expect("bud thread panicked");
+    let stem_steady = read_errno();
+
+    (stem_slot, stem_zero, stem_steady, bud_report)
+  })
+  .join()
+  .expect("stem thread panicked");
+  let (stem_slot, stem_zero, stem_steady, bud_report) = stem_report;
+  let (bud_slot, bud_zero, slot_pairs, value_pairs, bud_end) = bud_report;
+
+  assert_eq!(stem_zero, 0, "stem thread must start with zero errno");
+  assert_eq!(bud_zero, 0, "bud thread must start with zero errno");
+  assert_eq!(
+    stem_steady, 5151,
+    "bud writes must not clobber stem thread errno",
+  );
+  assert_eq!(
+    slot_pairs.len(),
+    REPEATS,
+    "expected one pointer pair per nested write",
+  );
+  assert_eq!(
+    value_pairs.len(),
+    REPEATS,
+    "expected one value pair per nested write",
+  );
+
+  let mut prior_value = 0_i32;
+  let mut next_target = 9000_i32;
+
+  for ((left_ptr, right_ptr), (before_errno, after_errno)) in
+    slot_pairs.iter().zip(value_pairs.iter())
+  {
+    assert_eq!(
+      *left_ptr, bud_slot,
+      "nested pointer before write must remain stable",
+    );
+    assert_eq!(
+      *right_ptr, bud_slot,
+      "nested pointer after write must remain stable",
+    );
+    assert_eq!(
+      *before_errno, prior_value,
+      "nested errno before write must match previous nested value",
+    );
+    next_target += 1;
+    assert_eq!(
+      *after_errno, next_target,
+      "nested errno after write must match current nested value",
+    );
+    prior_value = next_target;
+  }
+
+  assert_eq!(
+    bud_end, prior_value,
+    "nested final errno must match final nested write",
+  );
+  assert_ne!(
+    stem_slot, main_slot,
+    "stem thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    bud_slot, main_slot,
+    "bud thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    bud_slot, stem_slot,
+    "nested bud thread must not share errno storage with stem thread",
+  );
+  assert_eq!(
+    __errno_location() as usize,
+    main_slot,
+    "main-thread errno pointer must remain stable across nested writes",
+  );
+  assert_eq!(
+    read_errno(),
+    -111,
+    "nested writes must not clobber main-thread errno",
+  );
+}

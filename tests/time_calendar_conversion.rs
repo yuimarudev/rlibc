@@ -1989,6 +1989,176 @@ fn mktime_min_negative_tm_isdst_valid_minus_one_path_keeps_errno_thread_local_ac
 }
 
 #[test]
+fn mktime_min_negative_tm_isdst_matches_minus_one_for_tm_year_minimum_boundary() {
+  let seed = tm {
+    tm_sec: 0,
+    tm_min: 0,
+    tm_hour: 0,
+    tm_mday: 1,
+    tm_mon: 0,
+    tm_year: c_int::MIN,
+    tm_wday: -1,
+    tm_yday: -1,
+    tm_isdst: -1,
+    tm_gmtoff: 17,
+    tm_zone: ptr::dangling(),
+  };
+  let mut isdst_unknown = seed;
+  let mut isdst_min_negative = tm {
+    tm_isdst: c_int::MIN,
+    ..seed
+  };
+
+  write_errno(624);
+  // SAFETY: pointer is valid for the duration of the call.
+  let unknown_result = unsafe { mktime(&raw mut isdst_unknown) };
+  let unknown_errno = read_errno();
+
+  write_errno(625);
+  // SAFETY: pointer is valid for the duration of the call.
+  let min_negative_result = unsafe { mktime(&raw mut isdst_min_negative) };
+  let min_negative_errno = read_errno();
+
+  assert_ne!(unknown_result, -1);
+  assert_eq!(min_negative_result, unknown_result);
+  assert_eq!(unknown_errno, 624);
+  assert_eq!(min_negative_errno, 625);
+  assert_eq!(isdst_min_negative, isdst_unknown);
+  assert_normalized_calendar_metadata(&isdst_min_negative);
+  assert_utc_baseline_output_fields(&isdst_min_negative);
+}
+
+#[test]
+fn mktime_min_negative_tm_isdst_tm_year_minimum_path_keeps_errno_thread_local_across_threads() {
+  write_errno(974);
+
+  let child_errno = std::thread::spawn(|| {
+    let mut value = tm {
+      tm_sec: 0,
+      tm_min: 0,
+      tm_hour: 0,
+      tm_mday: 1,
+      tm_mon: 0,
+      tm_year: c_int::MIN,
+      tm_wday: -1,
+      tm_yday: -1,
+      tm_isdst: c_int::MIN,
+      tm_gmtoff: 42,
+      tm_zone: ptr::dangling(),
+    };
+    let mut unknown = tm {
+      tm_isdst: -1,
+      ..value
+    };
+
+    write_errno(791);
+    // SAFETY: pointer is valid for the duration of the call.
+    let unknown_result = unsafe { mktime(&raw mut unknown) };
+    assert_ne!(unknown_result, -1);
+    assert_eq!(read_errno(), 791);
+
+    write_errno(792);
+    // SAFETY: pointer is valid for the duration of the call.
+    let result = unsafe { mktime(&raw mut value) };
+
+    assert_eq!(result, unknown_result);
+    assert_eq!(value, unknown);
+
+    read_errno()
+  })
+  .join()
+  .expect("child thread should not panic");
+
+  assert_eq!(child_errno, 792);
+  assert_eq!(read_errno(), 974);
+}
+
+#[test]
+fn mktime_min_negative_tm_isdst_matches_minus_one_for_tm_year_maximum_boundary() {
+  let seed = tm {
+    tm_sec: 59,
+    tm_min: 59,
+    tm_hour: 23,
+    tm_mday: 31,
+    tm_mon: 11,
+    tm_year: c_int::MAX,
+    tm_wday: -1,
+    tm_yday: -1,
+    tm_isdst: -1,
+    tm_gmtoff: 17,
+    tm_zone: ptr::dangling(),
+  };
+  let mut isdst_unknown = seed;
+  let mut isdst_min_negative = tm {
+    tm_isdst: c_int::MIN,
+    ..seed
+  };
+
+  write_errno(628);
+  // SAFETY: pointer is valid for the duration of the call.
+  let unknown_result = unsafe { mktime(&raw mut isdst_unknown) };
+  let unknown_errno = read_errno();
+
+  write_errno(629);
+  // SAFETY: pointer is valid for the duration of the call.
+  let min_negative_result = unsafe { mktime(&raw mut isdst_min_negative) };
+  let min_negative_errno = read_errno();
+
+  assert_ne!(unknown_result, -1);
+  assert_eq!(min_negative_result, unknown_result);
+  assert_eq!(unknown_errno, 628);
+  assert_eq!(min_negative_errno, 629);
+  assert_eq!(isdst_min_negative, isdst_unknown);
+  assert_normalized_calendar_metadata(&isdst_min_negative);
+  assert_utc_baseline_output_fields(&isdst_min_negative);
+}
+
+#[test]
+fn mktime_min_negative_tm_isdst_tm_year_maximum_path_keeps_errno_thread_local_across_threads() {
+  write_errno(976);
+
+  let child_errno = std::thread::spawn(|| {
+    let mut value = tm {
+      tm_sec: 59,
+      tm_min: 59,
+      tm_hour: 23,
+      tm_mday: 31,
+      tm_mon: 11,
+      tm_year: c_int::MAX,
+      tm_wday: -1,
+      tm_yday: -1,
+      tm_isdst: c_int::MIN,
+      tm_gmtoff: 42,
+      tm_zone: ptr::dangling(),
+    };
+    let mut unknown = tm {
+      tm_isdst: -1,
+      ..value
+    };
+
+    write_errno(793);
+    // SAFETY: pointer is valid for the duration of the call.
+    let unknown_result = unsafe { mktime(&raw mut unknown) };
+    assert_ne!(unknown_result, -1);
+    assert_eq!(read_errno(), 793);
+
+    write_errno(794);
+    // SAFETY: pointer is valid for the duration of the call.
+    let result = unsafe { mktime(&raw mut value) };
+
+    assert_eq!(result, unknown_result);
+    assert_eq!(value, unknown);
+
+    read_errno()
+  })
+  .join()
+  .expect("child thread should not panic");
+
+  assert_eq!(child_errno, 794);
+  assert_eq!(read_errno(), 976);
+}
+
+#[test]
 fn mktime_large_negative_tm_isdst_matches_minus_one_under_utc_baseline() {
   let seed = tm {
     tm_sec: 12,
@@ -2154,7 +2324,7 @@ fn mktime_large_negative_tm_isdst_valid_minus_one_path_keeps_errno_thread_local_
 }
 
 #[test]
-fn mktime_large_negative_tm_isdst_matches_minus_one_for_underflow_error_at_tm_year_minimum() {
+fn mktime_large_negative_tm_isdst_matches_minus_one_for_tm_year_minimum_boundary() {
   let seed = tm {
     tm_sec: 0,
     tm_min: 0,
@@ -2173,8 +2343,6 @@ fn mktime_large_negative_tm_isdst_matches_minus_one_for_underflow_error_at_tm_ye
     tm_isdst: -7,
     ..seed
   };
-  let expected_unknown = isdst_unknown;
-  let expected_large_negative = isdst_large_negative;
 
   write_errno(626);
   // SAFETY: pointer is valid for the duration of the call.
@@ -2186,16 +2354,17 @@ fn mktime_large_negative_tm_isdst_matches_minus_one_for_underflow_error_at_tm_ye
   let large_negative_result = unsafe { mktime(&raw mut isdst_large_negative) };
   let large_negative_errno = read_errno();
 
-  assert_eq!(unknown_result, -1);
+  assert_ne!(unknown_result, -1);
   assert_eq!(large_negative_result, unknown_result);
-  assert_eq!(unknown_errno, ERANGE);
-  assert_eq!(large_negative_errno, ERANGE);
-  assert_eq!(isdst_unknown, expected_unknown);
-  assert_eq!(isdst_large_negative, expected_large_negative);
+  assert_eq!(unknown_errno, 626);
+  assert_eq!(large_negative_errno, 627);
+  assert_eq!(isdst_large_negative, isdst_unknown);
+  assert_normalized_calendar_metadata(&isdst_large_negative);
+  assert_utc_baseline_output_fields(&isdst_large_negative);
 }
 
 #[test]
-fn mktime_large_negative_tm_isdst_underflow_path_keeps_errno_thread_local_across_threads() {
+fn mktime_large_negative_tm_isdst_tm_year_minimum_path_keeps_errno_thread_local_across_threads() {
   write_errno(975);
 
   let child_errno = std::thread::spawn(|| {
@@ -2212,23 +2381,136 @@ fn mktime_large_negative_tm_isdst_underflow_path_keeps_errno_thread_local_across
       tm_gmtoff: 42,
       tm_zone: ptr::dangling(),
     };
-    let original = value;
+    let mut unknown = tm {
+      tm_isdst: -1,
+      ..value
+    };
 
-    write_errno(0);
+    write_errno(789);
+    // SAFETY: pointer is valid for the duration of the call.
+    let unknown_result = unsafe { mktime(&raw mut unknown) };
+    assert_ne!(unknown_result, -1);
+    assert_eq!(read_errno(), 789);
 
+    write_errno(790);
     // SAFETY: pointer is valid for the duration of the call.
     let result = unsafe { mktime(&raw mut value) };
 
-    assert_eq!(result, -1);
-    assert_eq!(value, original);
+    assert_eq!(result, unknown_result);
+    assert_eq!(value, unknown);
 
     read_errno()
   })
   .join()
   .expect("child thread should not panic");
 
-  assert_eq!(child_errno, ERANGE);
+  assert_eq!(child_errno, 790);
   assert_eq!(read_errno(), 975);
+}
+
+#[test]
+fn mktime_large_negative_tm_isdst_matches_minus_one_for_day_carry_boundary_at_tm_year_maximum() {
+  let seed = tm {
+    tm_sec: 0,
+    tm_min: 0,
+    tm_hour: 0,
+    tm_mday: 32,
+    tm_mon: 11,
+    tm_year: c_int::MAX,
+    tm_wday: -1,
+    tm_yday: -1,
+    tm_isdst: -1,
+    tm_gmtoff: 17,
+    tm_zone: ptr::dangling(),
+  };
+  let mut isdst_unknown = seed;
+  let mut isdst_large_negative = tm {
+    tm_isdst: -7,
+    ..seed
+  };
+
+  write_errno(628);
+  // SAFETY: pointer is valid for the duration of the call.
+  let unknown_result = unsafe { mktime(&raw mut isdst_unknown) };
+  let unknown_errno = read_errno();
+
+  write_errno(629);
+  // SAFETY: pointer is valid for the duration of the call.
+  let large_negative_result = unsafe { mktime(&raw mut isdst_large_negative) };
+  let large_negative_errno = read_errno();
+
+  assert_eq!(large_negative_result, unknown_result);
+  if unknown_result == -1 {
+    assert_eq!(unknown_errno, ERANGE);
+    assert_eq!(large_negative_errno, ERANGE);
+  } else {
+    assert_eq!(unknown_errno, 628);
+    assert_eq!(large_negative_errno, 629);
+    assert_normalized_calendar_metadata(&isdst_large_negative);
+    assert_utc_baseline_output_fields(&isdst_large_negative);
+  }
+  assert_eq!(isdst_large_negative, isdst_unknown);
+}
+
+#[test]
+fn mktime_large_negative_tm_isdst_day_carry_boundary_keeps_errno_thread_local_across_threads() {
+  write_errno(976);
+
+  let (child_reference_result, child_errno) = std::thread::spawn(|| {
+    let seed = tm {
+      tm_sec: 0,
+      tm_min: 0,
+      tm_hour: 0,
+      tm_mday: 32,
+      tm_mon: 11,
+      tm_year: c_int::MAX,
+      tm_wday: -1,
+      tm_yday: -1,
+      tm_isdst: -1,
+      tm_gmtoff: 42,
+      tm_zone: ptr::dangling(),
+    };
+    let mut unknown = seed;
+    let mut value = tm {
+      tm_isdst: -7,
+      ..seed
+    };
+
+    write_errno(791);
+
+    // SAFETY: pointer is valid for the duration of the call.
+    let unknown_result = unsafe { mktime(&raw mut unknown) };
+    let unknown_errno = read_errno();
+
+    write_errno(792);
+
+    // SAFETY: pointer is valid for the duration of the call.
+    let result = unsafe { mktime(&raw mut value) };
+    let result_errno = read_errno();
+
+    assert_eq!(result, unknown_result);
+    if unknown_result == -1 {
+      assert_eq!(unknown_errno, ERANGE);
+      assert_eq!(result_errno, ERANGE);
+    } else {
+      assert_eq!(unknown_errno, 791);
+      assert_eq!(result_errno, 792);
+      assert_normalized_calendar_metadata(&value);
+      assert_utc_baseline_output_fields(&value);
+    }
+    assert_eq!(value, unknown);
+
+    (unknown_result, result_errno)
+  })
+  .join()
+  .expect("child thread should not panic");
+
+  if child_reference_result == -1 {
+    assert_eq!(child_errno, ERANGE);
+  } else {
+    assert_eq!(child_errno, 792);
+  }
+  assert_eq!(read_errno(), 976);
 }
 
 #[test]

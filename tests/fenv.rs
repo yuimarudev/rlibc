@@ -87,6 +87,22 @@ fn fesetround_accepts_all_supported_modes() {
 }
 
 #[test]
+fn fesetround_success_preserves_errno() {
+  reset_fenv_state();
+  write_errno(58);
+
+  assert_eq!(fesetround(FE_UPWARD), 0);
+  assert_eq!(fegetround(), FE_UPWARD);
+  assert_eq!(read_errno(), 58);
+
+  assert_eq!(fesetround(FE_TOWARDZERO), 0);
+  assert_eq!(fegetround(), FE_TOWARDZERO);
+  assert_eq!(read_errno(), 58);
+
+  reset_fenv_state();
+}
+
+#[test]
 fn fegetround_does_not_modify_errno() {
   reset_fenv_state();
   write_errno(39);

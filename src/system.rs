@@ -735,6 +735,21 @@ mod tests {
   }
 
   #[test]
+  fn configured_processor_count_falls_back_when_possible_is_whitespace_only_and_present_missing() {
+    let count = configured_processor_count_with(|| Some(String::from(" \n\t ")), || None, || 6);
+
+    assert_eq!(count, 6);
+  }
+
+  #[test]
+  fn configured_processor_count_falls_back_when_possible_has_trailing_empty_token_and_present_missing()
+   {
+    let count = configured_processor_count_with(|| Some(String::from("0-1,")), || None, || 5);
+
+    assert_eq!(count, 5);
+  }
+
+  #[test]
   fn configured_processor_count_uses_present_file_when_possible_file_has_signed_tokens() {
     let count = configured_processor_count_with(
       || Some(String::from("+0-1")),

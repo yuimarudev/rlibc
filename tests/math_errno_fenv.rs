@@ -520,6 +520,29 @@ fn exp_subnormal_underflow_preserves_preexisting_divbyzero_and_raises_inexact() 
 }
 
 #[test]
+fn exp_subnormal_underflow_preserves_preexisting_overflow_and_raises_inexact() {
+  clear_all_excepts();
+  write_errno(EDOM);
+
+  let raise_status = feraiseexcept(FE_OVERFLOW);
+
+  assert_eq!(raise_status, 0, "feraiseexcept must succeed");
+  assert_ne!(fetestexcept(FE_OVERFLOW), 0);
+
+  let result = exp(-740.0);
+
+  assert!(result > 0.0);
+  assert!(result.is_sign_positive());
+  assert!(result < f64::MIN_POSITIVE);
+  assert_eq!(read_errno(), ERANGE);
+  assert_ne!(fetestexcept(FE_OVERFLOW), 0);
+  assert_ne!(fetestexcept(FE_UNDERFLOW), 0);
+  assert_ne!(fetestexcept(FE_INEXACT), 0);
+  assert_eq!(fetestexcept(FE_INVALID), 0);
+  assert_eq!(fetestexcept(FE_DIVBYZERO), 0);
+}
+
+#[test]
 fn exp_tiny_normal_does_not_set_range_error_or_underflow() {
   clear_all_excepts();
   write_errno(EDOM);

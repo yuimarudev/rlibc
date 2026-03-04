@@ -358,6 +358,26 @@ mod tests {
   }
 
   #[test]
+  fn parse_args_long_help_before_double_dash_with_trailing_positional_returns_help() {
+    let action = parse_args(&[
+      "--help".to_string(),
+      "--".to_string(),
+      "trailing-positional".to_string(),
+    ])
+    .expect("long help before double dash must parse as help");
+
+    assert!(matches!(action, Action::Help));
+  }
+
+  #[test]
+  fn parse_args_short_help_before_double_dash_with_trailing_positional_returns_help() {
+    let action = parse_args(&["-h".to_string(), "--".to_string(), "tail".to_string()])
+      .expect("short help before double dash must parse as help");
+
+    assert!(matches!(action, Action::Help));
+  }
+
+  #[test]
   fn parse_args_requires_values_for_flag_arguments() {
     let error = parse_args(&["--out-dir".to_string()]).expect_err("missing value must fail");
 
@@ -620,6 +640,14 @@ mod tests {
       .expect_err("option-like token after double dash must be treated as positional");
 
     assert_eq!(error, "unexpected positional argument: --help");
+  }
+
+  #[test]
+  fn parse_args_rejects_short_help_token_after_double_dash_as_positional() {
+    let error = parse_args(&["--".to_string(), "-h".to_string()])
+      .expect_err("short help token after double dash must be treated as positional");
+
+    assert_eq!(error, "unexpected positional argument: -h");
   }
 
   #[test]

@@ -505,6 +505,23 @@ fn accept_invalid_fd_with_null_addr_and_non_null_addrlen_overwrites_errno_with_e
 }
 
 #[test]
+fn accept_invalid_fd_with_null_addr_and_non_null_addrlen_returns_minus_one_and_errno_ebadf() {
+  let expected_len = to_socklen(core::mem::size_of::<SockaddrUn>());
+  let mut peer_len = expected_len;
+
+  set_errno(0);
+  // SAFETY: invalid descriptor is intentional; null addr and writable addrlen pointer are valid call forms.
+  let result = unsafe { accept(-1, core::ptr::null_mut(), core::ptr::addr_of_mut!(peer_len)) };
+
+  assert_eq!(result, -1);
+  assert_eq!(errno_value(), EBADF);
+  assert_eq!(
+    peer_len, expected_len,
+    "accept should not modify addrlen when descriptor is invalid"
+  );
+}
+
+#[test]
 fn accept_non_socket_fd_returns_minus_one_and_errno_enotsock() {
   let file = fs::File::open("/dev/null")
     .unwrap_or_else(|error| panic!("failed to open /dev/null for test: {error}"));

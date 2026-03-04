@@ -827,6 +827,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     "project_name_cstr_len() should match project_name() byte length"
   );
   assert_eq!(
+    c_name.to_bytes().len(),
+    rlibc::project_name_cstr_len(),
+    "project_name_cstr() payload length should match project_name_cstr_len()"
+  );
+  assert_eq!(
     c_name_bytes.len(),
     rlibc::project_name_cstr_len() + 1,
     "project_name_cstr_bytes() should include exactly one trailing NUL byte"
@@ -869,6 +874,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     c_name.to_bytes_with_nul().last(),
     Some(&0),
     "project_name_cstr().to_bytes_with_nul() should end with NUL"
+  );
+  assert_eq!(
+    c_name.to_bytes_with_nul()[rlibc::project_name_cstr_len()],
+    0,
+    "project_name_cstr_len() should index the trailing NUL in to_bytes_with_nul()"
   );
 }
 

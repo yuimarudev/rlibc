@@ -3,10 +3,10 @@ use rlibc::abi::errno::{EFAULT, EINVAL};
 use rlibc::abi::types::c_int;
 use rlibc::errno::__errno_location;
 use rlibc::time::{
-  CLOCK_BOOTTIME, CLOCK_BOOTTIME_ALARM, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE,
-  CLOCK_MONOTONIC_RAW, CLOCK_PROCESS_CPUTIME_ID, CLOCK_REALTIME, CLOCK_REALTIME_ALARM,
-  CLOCK_REALTIME_COARSE, CLOCK_SGI_CYCLE, CLOCK_TAI, CLOCK_THREAD_CPUTIME_ID, CLOCKFD,
-  clock_gettime, clockid_t, clockid_to_fd, fd_to_clockid, timespec,
+  clock_gettime, clockid_t, clockid_to_fd, fd_to_clockid, timespec, CLOCKFD, CLOCK_BOOTTIME,
+  CLOCK_BOOTTIME_ALARM, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE, CLOCK_MONOTONIC_RAW,
+  CLOCK_PROCESS_CPUTIME_ID, CLOCK_REALTIME, CLOCK_REALTIME_ALARM, CLOCK_REALTIME_COARSE,
+  CLOCK_SGI_CYCLE, CLOCK_TAI, CLOCK_THREAD_CPUTIME_ID,
 };
 
 fn read_errno() -> c_int {
@@ -52,11 +52,11 @@ fn dynamic_clockid_helpers_roundtrip_non_negative_fd_values() {
 }
 
 #[test]
-fn dynamic_clockid_helpers_zero_fd_can_alias_static_realtime_by_contract() {
+fn dynamic_clockid_helpers_zero_fd_is_tagged_dynamic_clock_id() {
   let zero_fd: c_int = 0;
   let dynamic_clock_id = fd_to_clockid(zero_fd);
 
-  assert_eq!(dynamic_clock_id, CLOCK_REALTIME);
+  assert_eq!(dynamic_clock_id & 0b111, CLOCKFD);
   assert_eq!(clockid_to_fd(dynamic_clock_id), zero_fd);
 }
 
@@ -97,6 +97,18 @@ fn dynamic_clockid_helpers_max_fd_aliases_to_negative_one_after_encoding() {
   assert_eq!(dynamic_clock_id & 0b111, CLOCKFD);
   assert_eq!(clockid_to_fd(dynamic_clock_id), -1);
   assert_ne!(clockid_to_fd(dynamic_clock_id), max_fd);
+}
+
+#[test]
+fn dynamic_clockid_helpers_min_fd_aliases_to_zero_fd_after_encoding() {
+  let min_fd = c_int::MIN;
+  let min_dynamic_clock_id = fd_to_clockid(min_fd);
+  let zero_dynamic_clock_id = fd_to_clockid(0);
+
+  assert_eq!(min_dynamic_clock_id, zero_dynamic_clock_id);
+  assert_eq!(min_dynamic_clock_id & 0b111, CLOCKFD);
+  assert_eq!(clockid_to_fd(min_dynamic_clock_id), 0);
+  assert_ne!(clockid_to_fd(min_dynamic_clock_id), min_fd);
 }
 
 #[test]
@@ -251,46 +263,72 @@ fn dynamic_clockid_alias_for_negative_fd_matches_static_thread_cputime_result_cl
 }
 
 #[test]
-fn dynamic_clockid_alias_for_zero_fd_matches_static_realtime_result_class() {
-  let mut alias_ts = timespec {
+fn dynamic_clockid_for_zero_fd_follows_kernel_errno_contract() {
+  let mut ts = timespec {
     tv_sec: 555,
     tv_nsec: 666,
   };
-  let alias_before = alias_ts;
-  let mut static_ts = timespec {
-    tv_sec: 777,
-    tv_nsec: 888,
-  };
-  let static_before = static_ts;
+  let before = ts;
 
   write_errno(71);
 
-  let alias_result = clock_gettime(fd_to_clockid(0), &raw mut alias_ts);
-  let alias_errno = read_errno();
+  let result = clock_gettime(fd_to_clockid(0), &raw mut ts);
 
-  write_errno(72);
-
-  let static_result = clock_gettime(CLOCK_REALTIME, &raw mut static_ts);
-  let static_errno = read_errno();
-
-  assert_eq!(alias_result, static_result);
-
-  if alias_result == 0 {
-    assert!(alias_ts.tv_sec > 0);
-    assert!((0..1_000_000_000).contains(&alias_ts.tv_nsec));
-    assert_eq!(alias_errno, 71);
-
-    assert!(static_ts.tv_sec > 0);
-    assert!((0..1_000_000_000).contains(&static_ts.tv_nsec));
-    assert_eq!(static_errno, 72);
+  if result == 0 {
+    assert!(ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&ts.tv_nsec));
+    assert_eq!(read_errno(), 71);
 
     return;
   }
 
-  assert_eq!(alias_result, -1);
-  assert_eq!(alias_errno, static_errno);
-  assert_eq!(alias_ts, alias_before);
-  assert_eq!(static_ts, static_before);
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(ts, before);
+}
+
+#[test]
+fn dynamic_clockid_alias_for_min_fd_matches_zero_fd_result_class() {
+  let mut min_ts = timespec {
+    tv_sec: 101,
+    tv_nsec: 202,
+  };
+  let min_before = min_ts;
+  let mut zero_ts = timespec {
+    tv_sec: 303,
+    tv_nsec: 404,
+  };
+  let zero_before = zero_ts;
+
+  write_errno(73);
+
+  let min_result = clock_gettime(fd_to_clockid(c_int::MIN), &raw mut min_ts);
+  let min_errno = read_errno();
+
+  write_errno(74);
+
+  let zero_result = clock_gettime(fd_to_clockid(0), &raw mut zero_ts);
+  let zero_errno = read_errno();
+
+  assert_eq!(fd_to_clockid(c_int::MIN), fd_to_clockid(0));
+  assert_eq!(min_result, zero_result);
+
+  if min_result == 0 {
+    assert!(min_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&min_ts.tv_nsec));
+    assert_eq!(min_errno, 73);
+
+    assert!(zero_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&zero_ts.tv_nsec));
+    assert_eq!(zero_errno, 74);
+
+    return;
+  }
+
+  assert_eq!(min_result, -1);
+  assert_eq!(min_errno, zero_errno);
+  assert_eq!(min_ts, min_before);
+  assert_eq!(zero_ts, zero_before);
 }
 
 #[test]
@@ -627,8 +665,8 @@ fn clock_gettime_invalid_clock_id_set_after_null_timespec_overwrites_errno_with_
 }
 
 #[test]
-fn clock_gettime_invalid_clock_id_set_after_invalid_clock_id_set_with_null_timespec_overwrites_errno_with_einval()
- {
+fn clock_gettime_invalid_clock_id_set_after_invalid_clock_id_set_with_null_timespec_overwrites_errno_with_einval(
+) {
   let invalid_clock_ids: [clockid_t; 4] = [-1, 9_999, c_int::MIN, c_int::MAX];
 
   for (index, invalid_clock_id) in invalid_clock_ids.iter().enumerate() {
@@ -654,8 +692,8 @@ fn clock_gettime_invalid_clock_id_set_after_invalid_clock_id_set_with_null_times
 }
 
 #[test]
-fn clock_gettime_monotonic_success_after_invalid_clock_id_set_with_null_timespec_keeps_errno_efault()
- {
+fn clock_gettime_monotonic_success_after_invalid_clock_id_set_with_null_timespec_keeps_errno_efault(
+) {
   let invalid_clock_ids: [clockid_t; 4] = [-1, 9_999, c_int::MIN, c_int::MAX];
 
   for (index, invalid_clock_id) in invalid_clock_ids.iter().enumerate() {
@@ -708,8 +746,8 @@ fn clock_gettime_realtime_success_after_invalid_clock_id_set_with_null_timespec_
 }
 
 #[test]
-fn clock_gettime_all_exported_clock_ids_after_invalid_clock_id_set_with_null_timespec_follow_kernel_errno_contract()
- {
+fn clock_gettime_all_exported_clock_ids_after_invalid_clock_id_set_with_null_timespec_follow_kernel_errno_contract(
+) {
   let invalid_clock_ids: [clockid_t; 4] = [-1, 9_999, c_int::MIN, c_int::MAX];
   let valid_clock_ids: [clockid_t; 12] = [
     CLOCK_REALTIME,
@@ -1734,8 +1772,8 @@ fn clock_gettime_dynamic_clock_id_alias_set_after_null_timespec_preserves_output
 }
 
 #[test]
-fn clock_gettime_monotonic_success_after_dynamic_clock_id_alias_set_null_timespec_keeps_errno_efault()
- {
+fn clock_gettime_monotonic_success_after_dynamic_clock_id_alias_set_null_timespec_keeps_errno_efault(
+) {
   let dynamic_clock_ids: [clockid_t; 3] = [
     fd_to_clockid(-1),
     fd_to_clockid(-2),
@@ -1759,6 +1797,37 @@ fn clock_gettime_monotonic_success_after_dynamic_clock_id_alias_set_null_timespe
 
     assert_eq!(success_result, 0);
     assert!(ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&ts.tv_nsec));
+    assert_eq!(read_errno(), EFAULT);
+  }
+}
+
+#[test]
+fn clock_gettime_realtime_success_after_dynamic_clock_id_alias_set_null_timespec_keeps_errno_efault(
+) {
+  let dynamic_clock_ids: [clockid_t; 3] = [
+    fd_to_clockid(-1),
+    fd_to_clockid(-2),
+    fd_to_clockid(c_int::MAX),
+  ];
+
+  for dynamic_clock_id in dynamic_clock_ids {
+    let mut ts = timespec {
+      tv_sec: 0,
+      tv_nsec: 0,
+    };
+
+    write_errno(EINVAL);
+
+    let null_result = clock_gettime(dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
+
+    let success_result = clock_gettime(CLOCK_REALTIME, &raw mut ts);
+
+    assert_eq!(success_result, 0);
+    assert!(ts.tv_sec > 0);
     assert!((0..1_000_000_000).contains(&ts.tv_nsec));
     assert_eq!(read_errno(), EFAULT);
   }
@@ -1806,19 +1875,51 @@ fn dynamic_alias_null_then_all_clocks_follow_errno_contract() {
       let before = ts;
 
       write_errno(EFAULT);
+      let errno_before_call = read_errno();
       let result = clock_gettime(*valid_clock_id, &raw mut ts);
 
       if result == 0 {
         assert!(ts.tv_sec >= 0);
         assert!((0..1_000_000_000).contains(&ts.tv_nsec));
-        assert_eq!(read_errno(), EFAULT);
+        assert_eq!(read_errno(), errno_before_call);
+
         continue;
       }
 
       assert_eq!(result, -1);
-      assert_ne!(read_errno(), EFAULT);
+      assert_eq!(read_errno(), EINVAL);
       assert_eq!(ts, before);
     }
+  }
+}
+
+#[test]
+fn invalid_clock_id_after_dynamic_alias_null_timespec_overwrites_errno_with_einval() {
+  let dynamic_clock_ids: [clockid_t; 3] = [
+    fd_to_clockid(-1),
+    fd_to_clockid(-2),
+    fd_to_clockid(c_int::MAX),
+  ];
+
+  for (index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    let mut invalid_ts = timespec {
+      tv_sec: 10_000 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 20_000 + i64::try_from(index).unwrap_or(0),
+    };
+    let before = invalid_ts;
+
+    write_errno(EINVAL);
+
+    let null_result = clock_gettime(*dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
+
+    let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
+
+    assert_eq!(invalid_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(invalid_ts, before);
   }
 }
 
@@ -1997,8 +2098,8 @@ fn clock_gettime_null_timespec_after_max_positive_invalid_clock_id_overwrites_er
 }
 
 #[test]
-fn clock_gettime_null_timespec_after_extreme_negative_invalid_clock_id_overwrites_errno_with_efault()
- {
+fn clock_gettime_null_timespec_after_extreme_negative_invalid_clock_id_overwrites_errno_with_efault(
+) {
   let mut invalid_ts = timespec {
     tv_sec: 35,
     tv_nsec: 46,
@@ -2090,8 +2191,8 @@ fn clock_gettime_max_positive_invalid_clock_id_after_null_timespec_overwrites_er
 }
 
 #[test]
-fn clock_gettime_extreme_negative_invalid_clock_id_after_null_timespec_overwrites_errno_with_einval()
- {
+fn clock_gettime_extreme_negative_invalid_clock_id_after_null_timespec_overwrites_errno_with_einval(
+) {
   let mut invalid_ts = timespec {
     tv_sec: 99,
     tv_nsec: 111,

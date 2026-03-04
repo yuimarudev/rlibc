@@ -358,6 +358,18 @@ fn glob_escaped_and_literal_leading_separators_preserve_double_slash_result() {
 }
 
 #[test]
+fn glob_escaped_double_root_with_dot_segment_collapses_to_single_root_prefix() {
+  let pattern =
+    CString::new("\\//.").unwrap_or_else(|error| panic!("pattern contains interior NUL: {error}"));
+  let mut state = GlobState::new();
+  let result = run_glob(&pattern, 0, &mut state);
+
+  assert_eq!(result, 0);
+  assert_eq!(state.path_count(), 1);
+  assert_eq!(state.paths(), vec![String::from("/.")]);
+}
+
+#[test]
 fn glob_dot_star_includes_dot_and_dotdot_entries() {
   let temp_dir = TempDir::new();
 

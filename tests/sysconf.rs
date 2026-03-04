@@ -780,6 +780,59 @@ fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_errno_after_prior
 }
 
 #[test]
+fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure()
+ {
+  let mut original = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  // SAFETY: `original` points to writable storage for one `RLimit`.
+  let read_status = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut original) };
+
+  assert_eq!(read_status, 0, "getrlimit(RLIMIT_NOFILE) must succeed");
+
+  let temporary = RLimit {
+    rlim_cur: 0,
+    rlim_max: original.rlim_max,
+  };
+  let _restore_guard = RLimitRestoreGuard {
+    resource: RLIMIT_NOFILE,
+    original,
+  };
+  // SAFETY: `temporary` points to initialized `RLimit` data.
+  let write_status = unsafe { setrlimit(RLIMIT_NOFILE, &raw const temporary) };
+
+  assert_eq!(
+    write_status, 0,
+    "setrlimit(RLIMIT_NOFILE, soft=0) must succeed",
+  );
+
+  set_errno(0);
+
+  // SAFETY: `len == 0` must fail with `ENAMETOOLONG` without dereferencing `name`.
+  let gethostname_result = unsafe { gethostname(core::ptr::null_mut(), 0 as size_t) };
+
+  assert_eq!(gethostname_result, -1);
+  assert_eq!(read_errno(), ENAMETOOLONG);
+
+  let first_open_max = query(_SC_OPEN_MAX);
+  let first_errno = read_errno();
+  let second_open_max = query(_SC_OPEN_MAX);
+  let second_errno = read_errno();
+
+  assert_eq!(first_open_max, 0);
+  assert_eq!(second_open_max, 0);
+  assert_eq!(
+    first_errno, ENAMETOOLONG,
+    "first successful _SC_OPEN_MAX query must preserve ENAMETOOLONG",
+  );
+  assert_eq!(
+    second_errno, ENAMETOOLONG,
+    "second successful _SC_OPEN_MAX query must preserve ENAMETOOLONG",
+  );
+}
+
+#[test]
 fn sysconf_open_max_zero_soft_limit_preserves_enametoolong_from_gethostname_failure() {
   let mut original = RLimit {
     rlim_cur: 0,

@@ -359,6 +359,7 @@ fn atexit_registration_limit_allows_minimum_slots_and_runs_handlers_on_exit() {
   let output = run_child_scenario(SCENARIO_ATEXIT_REGISTRATION_LIMIT_SUCCESS);
   let output_context = format_output(&output);
   let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
+  let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
   let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let probe_count = marker_occurrences(&output.stdout, b"{X}");
   let other_marker_count = marker_occurrences(&output.stdout, b"{1}")
@@ -400,6 +401,10 @@ fn atexit_registration_limit_allows_minimum_slots_and_runs_handlers_on_exit() {
     "atexit registration-limit success scenario should start child test harness: {output_context}"
   );
   assert_eq!(
+    child_entrypoint_count, 0,
+    "atexit registration-limit success scenario should early-terminate without child test completion marker: {output_context}"
+  );
+  assert_eq!(
     probe_count, ATEXIT_REGISTRATION_MAX_SUCCESS,
     "atexit registration-limit success scenario should run all accepted probe handlers: {output_context}"
   );
@@ -418,6 +423,7 @@ fn atexit_registration_limit_failure_exits_without_running_handlers() {
   let output = run_child_scenario(SCENARIO_ATEXIT_REGISTRATION_LIMIT);
   let output_context = format_output(&output);
   let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
+  let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
   let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let probe_count = marker_occurrences(&output.stdout, b"{X}");
   let other_marker_count = marker_occurrences(&output.stdout, b"{1}")
@@ -477,6 +483,10 @@ fn atexit_registration_limit_failure_exits_without_running_handlers() {
   assert!(
     runner_banner_count >= 1,
     "atexit registration-limit scenario should start child test harness before failing registration: {output_context}"
+  );
+  assert_eq!(
+    child_entrypoint_count, 0,
+    "atexit registration-limit scenario should early-exit without child test completion marker: {output_context}"
   );
   assert_eq!(
     failed_marker_count, 0,
@@ -697,6 +707,9 @@ fn atexit_runs_handlers_registered_during_exit() {
 fn underscore_exit_skips_atexit_handlers() {
   let output = run_child_scenario(SCENARIO_UNDERSCORE_EXIT);
   let output_context = format_output(&output);
+  let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
+  let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
+  let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let probe_count = marker_occurrences(&output.stdout, b"{X}");
   let exit_status_marker_count = marker_occurrences(&output.stdout, b"{E}");
   let lifo_marker_count = marker_occurrences(&output.stdout, b"{A}")
@@ -747,6 +760,18 @@ fn underscore_exit_skips_atexit_handlers() {
     output.status.signal(),
     None,
     "_Exit scenario should not terminate due to signal: {output_context}"
+  );
+  assert!(
+    runner_banner_count >= 1,
+    "_Exit scenario should start child test harness before early termination: {output_context}"
+  );
+  assert_eq!(
+    child_entrypoint_count, 0,
+    "_Exit scenario should early-terminate without child test completion marker: {output_context}"
+  );
+  assert_eq!(
+    failed_marker_count, 0,
+    "_Exit scenario should early-terminate before child harness FAILED summary in stdout: {output_context}"
   );
   assert!(
     !output.status.success(),

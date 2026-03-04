@@ -1426,6 +1426,70 @@ fn wctomb_null_reset_with_invalid_wc_allows_fresh_ascii_decode() {
 }
 
 #[test]
+fn wctomb_null_reset_with_invalid_wc_discards_mbtowc_null_output_pending_state() {
+  let prefix = [0xE3_u8, 0x81_u8];
+  let suffix = [0x82_u8, 0_u8];
+
+  // SAFETY: null reset call is part of C API contract.
+  let mbtowc_reset = unsafe { mbtowc(core::ptr::null_mut(), core::ptr::null(), to_size_t(0)) };
+
+  assert_eq!(mbtowc_reset, 0);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and readable for `n` bytes.
+  let partial = unsafe { mbtowc(core::ptr::null_mut(), prefix.as_ptr().cast(), to_size_t(2)) };
+
+  assert_eq!(partial, -1);
+  assert_eq!(errno_value(), EILSEQ);
+
+  set_errno(2992);
+  // SAFETY: null destination requests reset and ignores `wc`.
+  let wctomb_reset = unsafe { wctomb(core::ptr::null_mut(), 0xD800) };
+
+  assert_eq!(wctomb_reset, 0);
+  assert_eq!(errno_value(), 2992);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and readable for `n` bytes.
+  let trailing = unsafe { mbtowc(core::ptr::null_mut(), suffix.as_ptr().cast(), to_size_t(1)) };
+
+  assert_eq!(trailing, -1);
+  assert_eq!(errno_value(), EILSEQ);
+}
+
+#[test]
+fn wctomb_null_reset_with_invalid_wc_allows_fresh_mbtowc_ascii_decode() {
+  let prefix = [0xE3_u8, 0x81_u8];
+  let ascii = [b'L', 0_u8];
+
+  // SAFETY: null reset call is part of C API contract.
+  let mbtowc_reset = unsafe { mbtowc(core::ptr::null_mut(), core::ptr::null(), to_size_t(0)) };
+
+  assert_eq!(mbtowc_reset, 0);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and readable for `n` bytes.
+  let partial = unsafe { mbtowc(core::ptr::null_mut(), prefix.as_ptr().cast(), to_size_t(2)) };
+
+  assert_eq!(partial, -1);
+  assert_eq!(errno_value(), EILSEQ);
+
+  set_errno(3113);
+  // SAFETY: null destination requests reset and ignores `wc`.
+  let wctomb_reset = unsafe { wctomb(core::ptr::null_mut(), 0xD800) };
+
+  assert_eq!(wctomb_reset, 0);
+  assert_eq!(errno_value(), 3113);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and readable for `n` bytes.
+  let recovered = unsafe { mbtowc(core::ptr::null_mut(), ascii.as_ptr().cast(), to_size_t(1)) };
+
+  assert_eq!(recovered, 1);
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
 fn wctomb_null_reset_with_valid_wc_discards_mbtowc_pending_state() {
   let prefix = [0xE3_u8, 0x81_u8];
   let suffix = [0x82_u8, 0_u8];

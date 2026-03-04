@@ -152,6 +152,18 @@ fn kill_with_process_group_target_and_invalid_signal_returns_einval() {
 }
 
 #[test]
+fn kill_with_broadcast_target_and_invalid_signal_returns_einval() {
+  let _lock = signal_lock();
+
+  write_errno(0);
+
+  let status = kill(-1, INVALID_SIGNAL);
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EINVAL);
+}
+
+#[test]
 fn kill_with_negative_signal_returns_minus_one_and_sets_errno() {
   let _lock = signal_lock();
 

@@ -375,6 +375,17 @@ fn fcntl_dupfd_cloexec_invalid_fd_overwrites_errno_with_ebadf() {
 }
 
 #[test]
+fn fcntl_dupfd_cloexec_invalid_fd_with_negative_minimum_overwrites_errno_with_ebadf() {
+  write_errno(EINVAL);
+
+  // SAFETY: command does not dereference pointers and intentionally passes an invalid fd.
+  let result = unsafe { fcntl(-1, F_DUPFD_CLOEXEC, as_c_long(-1)) };
+
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EBADF);
+}
+
+#[test]
 fn fcntl_dupfd_cloexec_closed_fd_sets_ebadf() {
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
@@ -453,6 +464,24 @@ fn fcntl_dupfd_cloexec_closed_fd_with_excessive_minimum_sets_ebadf() {
 
   drop(file);
   write_errno(0);
+
+  // SAFETY: `closed_fd` was previously valid but is now closed; command takes an integer minimum.
+  let result = unsafe { fcntl(closed_fd, F_DUPFD_CLOEXEC, as_c_long(c_int::MAX)) };
+
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EBADF);
+
+  fs::remove_file(&path)
+    .unwrap_or_else(|error| panic!("failed to remove temp file {}: {error}", path.display()));
+}
+
+#[test]
+fn fcntl_dupfd_cloexec_closed_fd_with_excessive_minimum_overwrites_errno_with_ebadf() {
+  let (path, file) = create_read_only_temp_file(b"x");
+  let closed_fd = file.as_raw_fd();
+
+  drop(file);
+  write_errno(EINVAL);
 
   // SAFETY: `closed_fd` was previously valid but is now closed; command takes an integer minimum.
   let result = unsafe { fcntl(closed_fd, F_DUPFD_CLOEXEC, as_c_long(c_int::MAX)) };

@@ -1118,6 +1118,46 @@ fn getrlimit_success_keeps_errno_set_by_prior_high_bit_output_efault() {
 }
 
 #[test]
+fn getrlimit_low_invalid_output_sets_efault() {
+  let _guard = process_wide_rlimit_lock();
+  let invalid_output = core::ptr::with_exposed_provenance_mut::<RLimit>(1);
+
+  set_errno(0);
+
+  let status = unsafe { getrlimit(RLIMIT_NOFILE, invalid_output) };
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EFAULT);
+}
+
+#[test]
+fn getrlimit_success_keeps_errno_set_by_prior_low_invalid_output_efault() {
+  let _guard = process_wide_rlimit_lock();
+  let mut limits = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  let invalid_output = core::ptr::with_exposed_provenance_mut::<RLimit>(1);
+
+  set_errno(0);
+
+  let failed_status = unsafe { getrlimit(RLIMIT_NOFILE, invalid_output) };
+
+  assert_eq!(failed_status, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  let success_status = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut limits) };
+
+  assert_eq!(success_status, 0);
+  assert_eq!(
+    read_errno(),
+    EFAULT,
+    "successful getrlimit must not clear existing errno"
+  );
+  assert!(limits.rlim_max >= limits.rlim_cur);
+}
+
+#[test]
 fn setrlimit_null_input_sets_efault() {
   let _guard = process_wide_rlimit_lock();
 
@@ -1190,6 +1230,35 @@ fn setrlimit_low_invalid_input_sets_efault_and_preserves_limits() {
   assert_eq!(
     observed, original,
     "failed setrlimit with low invalid input pointer must not modify current process limits"
+  );
+}
+
+#[test]
+fn setrlimit_success_keeps_errno_set_by_prior_low_invalid_input_efault() {
+  let _guard = process_wide_rlimit_lock();
+  let mut current = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  let invalid_limit = core::ptr::with_exposed_provenance::<RLimit>(1);
+  let get_status = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut current) };
+
+  assert_eq!(get_status, 0, "precondition getrlimit must succeed");
+
+  set_errno(0);
+
+  let failed_status = unsafe { setrlimit(RLIMIT_NOFILE, invalid_limit) };
+
+  assert_eq!(failed_status, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  let success_status = unsafe { setrlimit(RLIMIT_NOFILE, &raw const current) };
+
+  assert_eq!(success_status, 0);
+  assert_eq!(
+    read_errno(),
+    EFAULT,
+    "successful setrlimit must not clear existing errno"
   );
 }
 

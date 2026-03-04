@@ -10,8 +10,8 @@
 //! handle as closed but does not attempt to unmap code/data in this phase.
 
 use crate::abi::errno::{
-  EACCES, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST, EINTR, EINVAL, EISDIR, ENOENT,
-  ENOEXEC, ENOTCONN, ENOTDIR, EPIPE, ETIMEDOUT,
+  EACCES, EADDRINUSE, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST, EINTR, EINVAL,
+  EISDIR, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE, ETIMEDOUT,
 };
 use crate::abi::types::{c_char, c_int, c_void};
 use crate::errno::{__errno_location, set_errno};
@@ -181,6 +181,7 @@ impl DlHandleRegistry {
 
       return CloseOutcome::InvalidHandle;
     }
+
     self.clear_trackable_null_handle_entry();
 
     let Some(handle_state) = self.handles.get_mut(&handle_id) else {
@@ -287,9 +288,12 @@ fn normalize_dlsym_missing_symbol_detail(symbol_label: &str, detail: &str) -> Op
   if after_symbol.is_empty() {
     return None;
   }
-  let normalized = after_symbol
-    .strip_prefix(':')
-    .map_or(trimmed_detail, |after_colon| after_colon.trim_start());
+
+  let normalized = if after_symbol.starts_with(':') {
+    after_symbol.trim_start_matches(':').trim_start()
+  } else {
+    trimmed_detail
+  };
 
   (!normalized.is_empty()).then(|| normalized.to_owned())
 }
@@ -431,6 +435,7 @@ const fn io_error_kind_errno(error_kind: io::ErrorKind) -> Option<c_int> {
     io::ErrorKind::ConnectionReset => Some(ECONNRESET),
     io::ErrorKind::ConnectionAborted => Some(ECONNABORTED),
     io::ErrorKind::NotConnected => Some(ENOTCONN),
+    io::ErrorKind::AddrInUse => Some(EADDRINUSE),
     io::ErrorKind::PermissionDenied => Some(EACCES),
     io::ErrorKind::InvalidInput => Some(EINVAL),
     io::ErrorKind::Interrupted => Some(EINTR),
@@ -615,6 +620,7 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
       set_dlerror_message(DLERROR_DLOPEN_NOT_ELF);
     } else {
       let path_detail = path.to_string_lossy();
+
       set_dlerror_message_with_detail(DLERROR_DLOPEN_PATH_OPEN_FAILED, Some(path_detail.as_ref()));
     }
 
@@ -685,6 +691,8 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 ///   prefix is normalized away in the final diagnostic.
 /// - duplicate symbol-prefix normalization also accepts optional whitespace
 ///   before the host-detail colon (for example `<symbol> : detail`).
+/// - repeated colons after the symbol prefix are collapsed during
+///   normalization (for example `<symbol>::detail`).
 /// - host details containing only the symbol label (with optional surrounding
 ///   spaces) are treated as empty and omitted.
 ///
@@ -858,6 +866,23 @@ mod tests {
     let message = take_dlerror_message().expect("expected pending dlerror message");
 
     assert_eq!(message, "rlibc: requested symbol was not found: dup_symbol");
+  }
+
+  #[test]
+  fn set_dlsym_missing_symbol_message_collapses_repeated_colons_after_symbol_prefix() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup_symbol".as_ptr(),
+      Some("dup_symbol:: host loader unresolved entry"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(
+      message,
+      "rlibc: requested symbol was not found: dup_symbol: host loader unresolved entry",
+    );
   }
 
   #[test]
@@ -1382,6 +1407,27 @@ mod tests {
   }
 
   #[test]
+  fn close_final_reference_cleans_trackable_zero_entry_and_marks_closed() {
+    let mut registry = DlHandleRegistry::new();
+    let tracked_handle = registry.allocate_test_handle(1);
+
+    registry.handles.insert(
+      TRACKABLE_NULL_HANDLE_ID,
+      DlHandleState::Open { refcount: 4 },
+    );
+
+    assert_eq!(
+      registry.close_handle(tracked_handle as usize),
+      super::CloseOutcome::Success
+    );
+    assert_eq!(registry.handle_state(TRACKABLE_NULL_HANDLE_ID), None);
+    assert_eq!(
+      registry.handle_state(tracked_handle as usize),
+      Some(DlHandleState::Closed)
+    );
+  }
+
+  #[test]
   fn close_handle_rejects_trackable_zero_entry_as_invalid_and_cleans_state() {
     let mut registry = DlHandleRegistry::new();
 
@@ -1788,6 +1834,16 @@ mod tests {
     let error = io::Error::new(io::ErrorKind::NotConnected, "not connected");
 
     assert_eq!(io_error_errno(&error, ENOENT), crate::abi::errno::ENOTCONN);
+  }
+
+  #[test]
+  fn io_error_errno_maps_addr_in_use_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::AddrInUse, "address in use");
+
+    assert_eq!(
+      io_error_errno(&error, ENOENT),
+      crate::abi::errno::EADDRINUSE
+    );
   }
 
   #[test]

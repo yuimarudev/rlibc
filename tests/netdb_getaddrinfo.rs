@@ -1341,6 +1341,32 @@ fn getaddrinfo_rejects_unknown_service_name_without_ai_numericserv_with_eai_serv
 }
 
 #[test]
+fn getaddrinfo_rejects_non_utf8_service_without_ai_numericserv_with_eai_service() {
+  let host = CString::new("127.0.0.1").expect("host literal must be NUL-free");
+  let service = CString::new(vec![0xff]).expect("service bytes must be NUL-free");
+  let mut hints = empty_hints();
+  let mut result = ptr::null_mut();
+
+  hints.ai_flags = AI_NUMERICHOST;
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
+
+  // SAFETY: all pointers are valid for the duration of this call.
+  let status = unsafe {
+    getaddrinfo(
+      host.as_ptr(),
+      service.as_ptr(),
+      &raw const hints,
+      &raw mut result,
+    )
+  };
+
+  assert_eq!(status, EAI_SERVICE);
+  assert!(result.is_null());
+}
+
+#[test]
 fn getaddrinfo_rejects_empty_service_string_when_ai_numericserv_is_set() {
   let host = CString::new("127.0.0.1").expect("host literal must be NUL-free");
   let service = CString::new("").expect("service literal must be NUL-free");

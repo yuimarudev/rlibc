@@ -368,6 +368,43 @@ fn strftime_o_alternative_modifier_c_aliases_negative_century_token() {
 }
 
 #[test]
+fn strftime_o_alternative_modifier_j_aliases_julian_day_token() {
+  let expected = b"002|002";
+  let (written, output) = run_strftime(b"%Oj|%j\0", &fixture_tm(), 32);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
+fn strftime_o_alternative_modifier_j_aliases_leap_year_upper_bound() {
+  let mut time_parts = fixture_tm();
+
+  time_parts.tm_year = 124;
+  time_parts.tm_yday = 365;
+
+  let expected = b"366|366";
+  let (written, output) = run_strftime(b"%Oj|%j\0", &time_parts, 32);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
+fn strftime_invalid_o_alternative_modifier_j_fallback_to_question_mark() {
+  let mut time_parts = fixture_tm();
+
+  time_parts.tm_year = 123;
+  time_parts.tm_yday = 365;
+
+  let expected = b"?";
+  let (written, output) = run_strftime(b"%Oj\0", &time_parts, 8);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
 fn strftime_formats_e_alternative_year_modifiers_for_negative_years() {
   let mut time_parts = fixture_tm();
 
@@ -1515,6 +1552,27 @@ fn strftime_invalid_hour_for_e_alternative_clock_aliases_fallback_to_question_ma
 
   assert_eq!(written, expected.len());
   assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
+fn strftime_formats_e_alternative_clock_alias_tokens_at_boundaries() {
+  let mut midnight = fixture_tm();
+
+  midnight.tm_hour = 0;
+
+  let mut noon = fixture_tm();
+
+  noon.tm_hour = 12;
+
+  let midnight_expected = b"12:04:05 AM|12:04:05 AM|00:04|00:04";
+  let noon_expected = b"12:04:05 PM|12:04:05 PM|12:04|12:04";
+  let (midnight_written, midnight_output) = run_strftime(b"%Er|%r|%ER|%R\0", &midnight, 64);
+  let (noon_written, noon_output) = run_strftime(b"%Er|%r|%ER|%R\0", &noon, 64);
+
+  assert_eq!(midnight_written, midnight_expected.len());
+  assert_eq!(c_string_prefix(&midnight_output), midnight_expected);
+  assert_eq!(noon_written, noon_expected.len());
+  assert_eq!(c_string_prefix(&noon_output), noon_expected);
 }
 
 #[test]
