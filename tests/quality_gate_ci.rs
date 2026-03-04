@@ -1035,6 +1035,42 @@ fn quality_gate_script_usage_mentions_duplicate_profile_rejection_for_both_forms
 }
 
 #[test]
+fn quality_gate_script_usage_lists_duplicate_profile_rejection_between_profile_and_continue_sections()
+ {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let profile_equals_style_support = "supports --profile <value> and --profile=<value> forms";
+  let duplicate_profile_rejection =
+    "duplicate --profile is rejected for both --profile <value> and --profile=<value> forms";
+  let continue_on_fail_option = "--continue-on-fail  keep running remaining profile steps and exit non-zero at end if any step failed (flag only; no value)";
+  let profile_equals_style_support_index = script
+    .find(profile_equals_style_support)
+    .unwrap_or_else(|| {
+      panic!(
+        "usage must contain profile equals-style support contract line: {profile_equals_style_support}"
+      )
+    });
+  let duplicate_profile_rejection_index = script
+    .find(duplicate_profile_rejection)
+    .unwrap_or_else(|| {
+      panic!(
+        "usage must contain duplicate-profile rejection contract line: {duplicate_profile_rejection}"
+      )
+    });
+  let continue_on_fail_index = script.find(continue_on_fail_option).unwrap_or_else(|| {
+    panic!("usage must contain continue-on-fail option contract line: {continue_on_fail_option}")
+  });
+
+  assert!(
+    profile_equals_style_support_index < duplicate_profile_rejection_index,
+    "usage must list duplicate-profile rejection guidance after profile equals-style support"
+  );
+  assert!(
+    duplicate_profile_rejection_index < continue_on_fail_index,
+    "usage must keep duplicate-profile rejection guidance in the profile section before continue-on-fail option"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_mentions_duplicate_option_rejection_once() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let occurrence_count = script
@@ -1798,6 +1834,21 @@ fn command_uses_supported_runtest_prefix_rejects_shell_suffixes_for_bin_runtest_
     assert!(
       !command_uses_supported_runtest_prefix(command),
       "bin-runtest variant with shell suffix must be rejected by manifest contract helper: {command}"
+    );
+  }
+}
+
+#[test]
+fn command_uses_supported_runtest_prefix_rejects_shell_suffixes_for_dot_runtest_prefix() {
+  for command in [
+    "./runtest -w functional/argv || echo unexpected",
+    "./runtest -w functional/argv && echo unexpected",
+    "./runtest -w functional/argv | cat",
+    "./runtest -w functional/argv > /tmp/rlibc-i060-dot-runtest-out",
+  ] {
+    assert!(
+      !command_uses_supported_runtest_prefix(command),
+      "dot-runtest variant with shell suffix must be rejected by manifest contract helper: {command}"
     );
   }
 }

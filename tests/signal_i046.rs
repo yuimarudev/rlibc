@@ -659,6 +659,25 @@ fn sigprocmask_ignores_extreme_negative_how_when_set_is_null() {
 }
 
 #[test]
+fn sigprocmask_ignores_extreme_positive_how_when_set_is_null() {
+  let _lock = signal_lock();
+  let mut oldset = SigSet {
+    bits: [c_ulong::MAX; 16],
+  };
+
+  write_errno(ERRNO_SENTINEL);
+  // SAFETY: null `set` requests query semantics; Linux ignores `how`.
+  let status = unsafe { sigprocmask(c_int::MAX, ptr::null(), &raw mut oldset) };
+
+  assert_eq!(status, 0);
+  assert_eq!(read_errno(), ERRNO_SENTINEL);
+  assert!(
+    oldset.bits[1..].iter().all(|word| *word == c_ulong::MAX),
+    "userspace-only oldset words should remain untouched by kernel-sized query",
+  );
+}
+
+#[test]
 fn sigprocmask_invalid_how_keeps_oldset_storage_unchanged() {
   let _lock = signal_lock();
   let set = SigSet::empty();

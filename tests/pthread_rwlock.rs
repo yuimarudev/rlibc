@@ -136,6 +136,32 @@ fn pthread_rwlock_init_accepts_raw_attr_bytes_without_native_attr_init() {
 }
 
 #[test]
+fn pthread_rwlock_reinit_with_raw_attr_bytes_still_returns_ebusy() {
+  let mut rwlock = new_rwlock();
+
+  init_rwlock(&mut rwlock);
+
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+  let attr = pthread_rwlockattr_t {
+    __size: [
+      0xA5_u8, 0x4C_u8, 0x1F_u8, 0xD2_u8, 0x02_u8, 0x00_u8, 0x00_u8, 0x00_u8,
+    ],
+  };
+  // SAFETY: `rwlock_ptr` already points to initialized lock storage.
+  let second_init = unsafe { pthread_rwlock_init(rwlock_ptr, ptr::from_ref(&attr)) };
+
+  assert_eq!(second_init, EBUSY);
+  // SAFETY: lock remains initialized from the first init.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+  // SAFETY: current thread holds the read lock.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: lock is initialized and unlocked.
+  let destroy_result = unsafe { pthread_rwlock_destroy(rwlock_ptr) };
+
+  assert_eq!(destroy_result, 0);
+}
+
+#[test]
 fn pthread_rwlock_init_accepts_process_shared_attr_as_default_attributes() {
   let mut rwlock = new_rwlock();
   let rwlock_ptr = ptr::from_mut(&mut rwlock);

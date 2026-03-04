@@ -1225,6 +1225,10 @@ fn exported_symbol_detection_rejects_statement_context_function_call_text() {
     "getpid"
   ));
   assert!(!line_declares_exported_symbol("wrap(getpid());", "getpid"));
+  assert!(!line_declares_exported_symbol(
+    "wrap((getpid()));",
+    "getpid"
+  ));
   assert!(!line_declares_exported_symbol("wrap(!getpid());", "getpid"));
   assert!(!line_declares_exported_symbol("!getpid();", "getpid"));
   assert!(!line_declares_exported_symbol("~getpid();", "getpid"));
@@ -1695,6 +1699,53 @@ fn setjmp_header_tolerates_function_like_predefined_noreturn_helper_macro() {
     "  }",
     "  return 0;",
     "}",
+    "",
+  ]
+  .join("\n");
+
+  std::fs::write(&source_path, translation_unit)
+    .unwrap_or_else(|error| panic!("failed to write {}: {error}", source_path.display()));
+
+  let output = Command::new(&compiler)
+    .arg("-std=c11")
+    .arg("-fsyntax-only")
+    .arg("-I")
+    .arg(include_root())
+    .arg(&source_path)
+    .output()
+    .unwrap_or_else(|error| panic!("failed to execute {compiler}: {error}"));
+  let _ = std::fs::remove_file(&source_path);
+
+  assert!(
+    output.status.success(),
+    "{compiler} failed for {}.\nstdout:\n{}\nstderr:\n{}",
+    source_path.display(),
+    String::from_utf8_lossy(&output.stdout),
+    String::from_utf8_lossy(&output.stderr),
+  );
+}
+
+#[test]
+fn setjmp_header_undefines_function_like_predefined_noreturn_helper_after_include() {
+  let compiler = find_c_compiler()
+    .unwrap_or_else(|| panic!("no C compiler found in PATH (checked CC, cc, clang, gcc)"));
+  let nonce = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_nanos();
+  let source_path = std::env::temp_dir().join(format!(
+    "rlibc_setjmp_noreturn_predefined_function_like_scope_{}_{}.c",
+    std::process::id(),
+    nonce
+  ));
+  let translation_unit = [
+    "#define RLIBC_NORETURN(...) __attribute__((deprecated))",
+    "#include <setjmp.h>",
+    "#ifdef RLIBC_NORETURN",
+    "#error \"RLIBC_NORETURN should be undefined after including <setjmp.h>\"",
+    "#endif",
+    "",
+    "int main(void) { return 0; }",
     "",
   ]
   .join("\n");

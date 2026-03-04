@@ -2495,6 +2495,113 @@ fn setlocale_empty_category_locale_with_empty_lc_all_unsupported_lang_rejection_
 }
 
 #[test]
+fn setlocale_empty_lc_all_with_unsupported_category_variable_rejection_then_query_preserves_errno()
+ {
+  let _env_lock = lock_locale_environment();
+  let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
+
+  for (index, &(_, variable)) in CATEGORY_VARIABLES.iter().enumerate() {
+    clear_locale_environment();
+    set_locale_environment("LC_ALL", "");
+
+    for &(_, category_variable) in &CATEGORY_VARIABLES {
+      set_locale_environment(category_variable, "POSIX");
+    }
+
+    set_locale_environment(variable, "en_US.UTF-8");
+    set_locale_environment("LANG", "POSIX");
+
+    // SAFETY: argument points to a valid NUL-terminated locale string.
+    let baseline_ptr = unsafe { setlocale(LC_ALL, as_c_ptr(b"C\0")) };
+
+    assert!(
+      !baseline_ptr.is_null(),
+      "LC_ALL should accept baseline C locale before unsupported {variable} rejection checks",
+    );
+
+    let rejection_errno = 4500 + index as c_int;
+
+    write_errno(rejection_errno);
+
+    // SAFETY: argument points to a valid NUL-terminated locale string (`""`).
+    let rejected_ptr = unsafe { setlocale(LC_ALL, as_c_ptr(b"\0")) };
+
+    assert!(
+      rejected_ptr.is_null(),
+      "LC_ALL empty locale should reject unsupported {variable}",
+    );
+    assert_eq!(read_errno(), rejection_errno);
+
+    let query_errno = 4550 + index as c_int;
+
+    write_errno(query_errno);
+
+    // SAFETY: null query is valid per `setlocale` contract.
+    let query_ptr = unsafe { setlocale(LC_ALL, ptr::null()) };
+
+    assert!(
+      !query_ptr.is_null(),
+      "LC_ALL query should stay available after unsupported {variable} rejection",
+    );
+    assert_eq!(locale_name(query_ptr), b"C");
+    assert_eq!(read_errno(), query_errno);
+  }
+}
+
+#[test]
+fn setlocale_empty_lc_all_with_non_utf8_category_variable_rejection_then_query_preserves_errno() {
+  let _env_lock = lock_locale_environment();
+  let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
+
+  for (index, &(_, variable)) in CATEGORY_VARIABLES.iter().enumerate() {
+    clear_locale_environment();
+    set_locale_environment("LC_ALL", "");
+
+    for &(_, category_variable) in &CATEGORY_VARIABLES {
+      set_locale_environment(category_variable, "POSIX");
+    }
+
+    set_locale_environment_raw_bytes(variable, &[0xFF]);
+    set_locale_environment("LANG", "POSIX");
+
+    // SAFETY: argument points to a valid NUL-terminated locale string.
+    let baseline_ptr = unsafe { setlocale(LC_ALL, as_c_ptr(b"C\0")) };
+
+    assert!(
+      !baseline_ptr.is_null(),
+      "LC_ALL should accept baseline C locale before non-UTF-8 {variable} rejection checks",
+    );
+
+    let rejection_errno = 4600 + index as c_int;
+
+    write_errno(rejection_errno);
+
+    // SAFETY: argument points to a valid NUL-terminated locale string (`""`).
+    let rejected_ptr = unsafe { setlocale(LC_ALL, as_c_ptr(b"\0")) };
+
+    assert!(
+      rejected_ptr.is_null(),
+      "LC_ALL empty locale should reject non-UTF-8 {variable}",
+    );
+    assert_eq!(read_errno(), rejection_errno);
+
+    let query_errno = 4650 + index as c_int;
+
+    write_errno(query_errno);
+
+    // SAFETY: null query is valid per `setlocale` contract.
+    let query_ptr = unsafe { setlocale(LC_ALL, ptr::null()) };
+
+    assert!(
+      !query_ptr.is_null(),
+      "LC_ALL query should stay available after non-UTF-8 {variable} rejection",
+    );
+    assert_eq!(locale_name(query_ptr), b"C");
+    assert_eq!(read_errno(), query_errno);
+  }
+}
+
+#[test]
 fn setlocale_empty_category_locale_prefers_category_variable_and_preserves_errno() {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);

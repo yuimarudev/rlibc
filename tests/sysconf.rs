@@ -1659,6 +1659,27 @@ fn sysconf_nprocessors_conf_matches_cpu_possible_or_present_when_parseable() {
 }
 
 #[test]
+fn sysconf_nprocessors_conf_repeated_success_keeps_errno_sentinel() {
+  set_errno(ERRNO_SENTINEL);
+
+  let first_configured = query(_SC_NPROCESSORS_CONF);
+  let first_errno = read_errno();
+  let second_configured = query(_SC_NPROCESSORS_CONF);
+  let second_errno = read_errno();
+
+  assert!(
+    first_configured > 0,
+    "_SC_NPROCESSORS_CONF must be positive"
+  );
+  assert!(
+    second_configured > 0,
+    "_SC_NPROCESSORS_CONF must be positive"
+  );
+  assert_eq!(first_errno, ERRNO_SENTINEL);
+  assert_eq!(second_errno, ERRNO_SENTINEL);
+}
+
+#[test]
 fn sysconf_unsupported_name_sets_einval() {
   set_errno(0);
 

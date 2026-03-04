@@ -294,15 +294,11 @@ fn normalize_dlsym_missing_symbol_detail(symbol_label: &str, detail: &str) -> Op
     };
     let mut collapsed = after_separator;
 
-    loop {
-      let trimmed = collapsed.trim_start();
-      let Some(rest) = trimmed.strip_prefix(':') else {
-        collapsed = trimmed;
-        break;
-      };
-
+    while let Some(rest) = collapsed.trim_start().strip_prefix(':') {
       collapsed = rest;
     }
+
+    let collapsed = collapsed.trim_start();
 
     if collapsed.is_empty() {
       return None;
@@ -706,6 +702,8 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 ///   use a canonical message without a host-detail suffix.
 /// - when host detail already starts with `<symbol>:`, that duplicate symbol
 ///   prefix is normalized away in the final diagnostic.
+/// - duplicate-prefix normalization is only applied when `<symbol>` is
+///   followed by a separator colon (with optional surrounding whitespace).
 /// - duplicate symbol-prefix normalization also accepts optional whitespace
 ///   before the host-detail colon (for example `<symbol> : detail`).
 /// - repeated colons after the symbol prefix are collapsed during
@@ -864,6 +862,23 @@ mod tests {
     assert_eq!(
       message,
       "rlibc: requested symbol was not found: dup_symbol: host loader unresolved entry",
+    );
+  }
+
+  #[test]
+  fn set_dlsym_missing_symbol_message_keeps_non_separator_symbol_prefix_detail() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup".as_ptr(),
+      Some("dup_symbol: host loader unresolved entry"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(
+      message,
+      "rlibc: requested symbol was not found: dup: dup_symbol: host loader unresolved entry",
     );
   }
 
@@ -1928,6 +1943,16 @@ mod tests {
     assert_eq!(
       io_error_errno(&error, ENOENT),
       crate::abi::errno::EADDRNOTAVAIL
+    );
+  }
+
+  #[test]
+  fn io_error_errno_maps_network_unreachable_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::NetworkUnreachable, "network unreachable");
+
+    assert_eq!(
+      io_error_errno(&error, ENOENT),
+      crate::abi::errno::ENETUNREACH
     );
   }
 

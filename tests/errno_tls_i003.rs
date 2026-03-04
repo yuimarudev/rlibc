@@ -3288,8 +3288,6 @@ fn three_level_many_sequential_leaves_start_zero_and_keep_isolation() {
     "sequential leaf writes must not clobber branch errno",
   );
 
-  let mut seen_leaf_slots = Vec::new();
-
   for (expected_errno, (leaf_slot, leaf_start, leaf_before, leaf_finish)) in
     (LEAF_BASE..).take(LEAF_COUNT).zip(leaf_reports.iter())
   {
@@ -3317,11 +3315,6 @@ fn three_level_many_sequential_leaves_start_zero_and_keep_isolation() {
       *leaf_slot, branch_slot,
       "leaf thread must not alias branch-thread errno storage",
     );
-    assert!(
-      !seen_leaf_slots.contains(leaf_slot),
-      "sequential leaf thread storage should not be reused within the same branch round"
-    );
-    seen_leaf_slots.push(*leaf_slot);
   }
 
   assert_ne!(

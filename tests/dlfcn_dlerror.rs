@@ -1814,6 +1814,10 @@ fn dlerror_dlopen_failure_replaces_older_pending_message() {
     "unexpected dlerror message: {message}",
   );
   assert!(
+    message.contains("rlibc_i055_dlopen_replaces_error.so"),
+    "missing-path dlerror should include path detail text: {message}",
+  );
+  assert!(
     take_dlerror_message().is_none(),
     "second dlerror call must clear pending state",
   );

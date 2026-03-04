@@ -1216,6 +1216,48 @@ fn adapter_rejects_runtest_prefix_with_positional_token_and_logical_or_suffix() 
 }
 
 #[test]
+fn adapter_rejects_dot_runtest_prefix_with_shell_operator_suffixes() {
+  for (name, command) in [
+    (
+      "i060-dot-runtest-logical-or-suffix",
+      "./runtest -w functional/argv || echo unexpected",
+    ),
+    (
+      "i060-dot-runtest-logical-and-suffix",
+      "./runtest -w functional/argv && echo unexpected",
+    ),
+    (
+      "i060-dot-runtest-pipe-suffix",
+      "./runtest -w functional/argv | cat",
+    ),
+    (
+      "i060-dot-runtest-output-redirection-suffix",
+      "./runtest -w functional/argv > /tmp/rlibc-i060-dot-runtest-out",
+    ),
+  ] {
+    let temp_dir = TempDirGuard::new(name);
+    let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+
+    write_text(&manifest_path, &format!("case-a|{command}\n"));
+
+    let arguments = vec![
+      "--dry-run".to_string(),
+      "--profile".to_string(),
+      manifest_path.to_string_lossy().into_owned(),
+    ];
+    let output = run_adapter(&arguments);
+    let stderr = stderr_text(&output);
+
+    assert!(
+      !output.status.success(),
+      "shell-operator suffix for ./runtest prefix must fail: {command}"
+    );
+    assert!(stderr.contains("runtest smoke command contains unsupported shell operators"));
+    assert!(stderr.contains("line 1"));
+  }
+}
+
+#[test]
 fn adapter_rejects_runtest_prefix_with_pipe_operator_suffix() {
   let temp_dir = TempDirGuard::new("i060-runtest-pipe-operator");
   let manifest_path = temp_dir.path().join("libc-test-smoke.txt");

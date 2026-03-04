@@ -1499,6 +1499,36 @@ fn mbsrtowcs_zero_len_does_not_validate_or_advance_src() {
 }
 
 #[test]
+fn mbsrtowcs_zero_len_does_not_validate_or_advance_src_with_corrupted_state() {
+  let input = [0xFF_u8, 0_u8];
+  let mut src = input.as_ptr().cast::<c_char>();
+  let mut state = mbstate_t::new();
+  let mut dst = [0_i32; 1];
+  let original = src;
+  // bytes=[0xE3, 0, 0, 0], pending_len=1, expected_len=0 (impossible state).
+  let corrupted = [0xE3_u8, 0, 0, 0, 1, 0, 0, 0];
+
+  write_state_bytes(&mut state, corrupted);
+  // SAFETY: state pointer is valid readable storage.
+  let before = unsafe { mbsinit(&raw const state) };
+
+  assert_eq!(before, 0);
+
+  set_errno(6262);
+  // SAFETY: pointers are valid; `len == 0` should short-circuit before validating state/input.
+  let converted = unsafe { mbsrtowcs(dst.as_mut_ptr(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(converted, sz(0));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 6262);
+
+  // SAFETY: state pointer is valid readable storage.
+  let after = unsafe { mbsinit(&raw const state) };
+
+  assert_eq!(after, 0);
+}
+
+#[test]
 fn mbsrtowcs_null_dst_counts_without_advancing_src() {
   let input = b"ab\xF0\x9F\x8D\xA3\0";
   let mut src = input.as_ptr().cast::<c_char>();

@@ -1286,6 +1286,43 @@ fn pthread_unknown_probe_does_not_break_local_detached_eventual_release() {
 }
 
 #[test]
+fn pthread_unknown_probe_does_not_break_native_attr_round_trip() {
+  let _serial = pthread_i041_serial_guard();
+  let baseline = create_joinable_thread(return_argument, ptr::null_mut());
+  // SAFETY: thread id was produced by `pthread_create`.
+  let baseline_join = unsafe { pthread_join(baseline, ptr::null_mut()) };
+  let Some(poisoned_candidate) = baseline.checked_add(1) else {
+    panic!("pthread_t id increment overflowed unexpectedly");
+  };
+
+  assert_eq!(baseline_join, 0);
+
+  for _ in 0..32 {
+    // SAFETY: probing unknown ids is intentional for regression coverage.
+    let unknown_join = unsafe { pthread_join(poisoned_candidate, ptr::null_mut()) };
+    let unknown_detach = pthread_detach(poisoned_candidate);
+
+    assert_eq!(unknown_join, ESRCH);
+    assert_eq!(unknown_detach, ESRCH);
+  }
+
+  let mut payload = 0x7A11_CE42_u64;
+  let arg = ptr::from_mut(&mut payload).cast::<c_void>();
+  let native_thread = create_native_joinable_thread(return_argument, arg);
+  let mut returned = ptr::null_mut();
+  // SAFETY: native thread id was produced by `pthread_create` with initialized attrs.
+  let join_result = unsafe { pthread_join(native_thread, &raw mut returned) };
+  // SAFETY: repeated join validates consumed-handle behavior on native attr path.
+  let second_join = unsafe { pthread_join(native_thread, ptr::null_mut()) };
+  let detach_after_join = pthread_detach(native_thread);
+
+  assert_eq!(join_result, 0);
+  assert_eq!(returned, arg);
+  assert_eq!(second_join, ESRCH);
+  assert_eq!(detach_after_join, ESRCH);
+}
+
+#[test]
 fn pthread_join_is_single_consumer() {
   let _serial = pthread_i041_serial_guard();
   let thread = create_joinable_thread(return_argument, ptr::null_mut());

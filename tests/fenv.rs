@@ -622,6 +622,23 @@ fn fesetenv_with_default_env_resets_round_and_clears_flags() {
 }
 
 #[test]
+fn fesetenv_with_default_env_preserves_errno() {
+  reset_fenv_state();
+  write_errno(54);
+
+  assert_eq!(fesetround(FE_UPWARD), 0);
+  assert_eq!(feraiseexcept(FE_OVERFLOW), 0);
+  // SAFETY: `FE_DFL_ENV` is a valid sentinel for `fesetenv`.
+  assert_eq!(unsafe { fesetenv(FE_DFL_ENV) }, 0);
+
+  assert_eq!(fegetround(), FE_TONEAREST);
+  assert_eq!(fetestexcept(FE_ALL_EXCEPT), 0);
+  assert_eq!(read_errno(), 54);
+
+  reset_fenv_state();
+}
+
+#[test]
 fn fesetenv_success_preserves_errno() {
   reset_fenv_state();
 

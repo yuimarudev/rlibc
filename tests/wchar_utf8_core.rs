@@ -679,6 +679,33 @@ fn decode_utf8_rejects_zero_lengths_with_stale_bytes_on_empty_input() {
 }
 
 #[test]
+fn decode_utf8_rejects_zero_lengths_with_stale_bytes_then_retries_same_input() {
+  let mut state = mbstate_t::new();
+
+  // bytes=[0x41, 0, 0, 0], pending_len=0, expected_len=0.
+  // Fully initial lengths with stale bytes are impossible in this
+  // implementation's state machine.
+  write_state_bytes(&mut state, [0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+  let input = [b'A', b'B'];
+  let first = decode_utf8(&mut state, &input);
+
+  assert_eq!(first, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+
+  let retried = decode_utf8(&mut state, &input);
+
+  assert_eq!(
+    retried,
+    Utf8DecodeResult::Complete {
+      code_point: u32::from(b'A'),
+      consumed: 1,
+    },
+  );
+  assert!(state.is_initial());
+}
+
+#[test]
 fn decode_utf8_rejects_state_with_nonzero_reserved_bytes() {
   let mut state = mbstate_t::new();
 

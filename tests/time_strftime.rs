@@ -315,6 +315,24 @@ fn strftime_e_alternative_modifier_u_keeps_sunday_mapping() {
 }
 
 #[test]
+fn strftime_e_alternative_modifier_s_aliases_epoch_seconds_token() {
+  let expected = b"1704164645|1704164645";
+  let (written, output) = run_strftime(b"%Es|%s\0", &fixture_tm(), 64);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
+fn strftime_e_alternative_modifier_n_and_t_alias_control_tokens() {
+  let expected = b"\n|\n|\t|\t";
+  let (written, output) = run_strftime(b"%En|%n|%Et|%t\0", &fixture_tm(), 32);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
 fn strftime_invalid_e_alternative_modifier_u_fallback_to_question_mark() {
   let mut time_parts = fixture_tm();
 
