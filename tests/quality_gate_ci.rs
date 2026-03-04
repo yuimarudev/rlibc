@@ -1708,6 +1708,21 @@ fn command_uses_supported_runtest_prefix_accepts_multiple_split_w_workload_pairs
 }
 
 #[test]
+fn command_uses_supported_runtest_prefix_accepts_nested_workload_path_for_supported_prefixes() {
+  for command in [
+    "runtest -w functional/stdio/vfprintf",
+    "./runtest -w functional/stdio/vfprintf",
+    "bin/runtest -w functional/stdio/vfprintf",
+    "./bin/runtest -w functional/stdio/vfprintf",
+  ] {
+    assert!(
+      command_uses_supported_runtest_prefix(command),
+      "nested workload path must remain valid for supported runtest prefixes: {command}"
+    );
+  }
+}
+
+#[test]
 fn command_uses_supported_runtest_prefix_rejects_attached_w_workload_token_after_valid_pair() {
   assert!(
     !command_uses_supported_runtest_prefix("runtest -w functional/argv -wfunctional/errno"),

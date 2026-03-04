@@ -816,6 +816,10 @@ fn project_name_c_string_accessors_stay_consistent() {
     name_bytes,
     "project_name_cstr() payload should match project_name() bytes"
   );
+  assert!(
+    !c_name.to_bytes().contains(&0),
+    "project_name_cstr() payload should not contain interior NUL bytes"
+  );
   assert_eq!(
     c_name.to_str().ok(),
     Some(rlibc::project_name()),

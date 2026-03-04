@@ -1761,6 +1761,64 @@ fn pthread_mutex_destroy_returns_ebusy_while_recursive_cond_timedwaiter_referenc
 }
 
 #[test]
+fn pthread_mutex_destroy_returns_ebusy_while_zero_initialized_recursive_cond_timedwaiter_references_mutex()
+ {
+  let mut mutex = init_recursive_mutex();
+  let mut cond = pthread_cond_t::default();
+  let mutex_addr = (&raw mut mutex) as usize;
+  let cond_addr = (&raw mut cond) as usize;
+  let (started_tx, started_rx) = mpsc::channel();
+  let waiter = thread::spawn(move || {
+    let mutex_ptr = mutex_addr as *mut pthread_mutex_t;
+    let cond_ptr = cond_addr as *mut pthread_cond_t;
+    let mut now = timespec {
+      tv_sec: 0,
+      tv_nsec: 0,
+    };
+
+    assert_eq!(clock_gettime(CLOCK_REALTIME, &raw mut now), 0);
+
+    let deadline = timespec {
+      tv_sec: now.tv_sec.saturating_add(10),
+      tv_nsec: now.tv_nsec,
+    };
+
+    assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+    assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+    started_tx
+      .send(())
+      .expect("failed to send waiter start signal");
+    assert_eq!(
+      pthread_cond_timedwait(cond_ptr, mutex_ptr, &raw const deadline),
+      0
+    );
+    assert_eq!(pthread_mutex_unlock(mutex_ptr), 0);
+    assert_eq!(
+      pthread_mutex_unlock(mutex_ptr),
+      0,
+      "zero-initialized recursive timedwait waiter must regain full recursive depth before exit",
+    );
+  });
+
+  started_rx.recv().expect("waiter did not start");
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+  assert_eq!(
+    pthread_mutex_destroy(&raw mut mutex),
+    EBUSY,
+    "destroy must fail while zero-initialized recursive cond timedwait keeps a mutex reference",
+  );
+
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(pthread_cond_signal(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+
+  waiter.join().expect("waiter thread panicked");
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_destroy(&raw mut mutex), 0);
+}
+
+#[test]
 fn pthread_mutex_destroy_succeeds_after_recursive_cond_timedwait_timeout_releases_reference() {
   let mut mutex = init_recursive_mutex();
   let mut cond = init_cond();

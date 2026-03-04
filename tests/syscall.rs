@@ -311,6 +311,14 @@ fn syscall3_negative_number_returns_enosys() {
 }
 
 #[test]
+fn syscall3_large_negative_number_returns_enosys() {
+  // SAFETY: invalid large negative syscall number does not dereference pointers.
+  let raw = unsafe { syscall3(-4096, 0, 0, 0) };
+
+  assert_eq!(decode(raw), Err(ENOSYS));
+}
+
+#[test]
 fn syscall3_errno_window_upper_bound_number_returns_enosys() {
   // SAFETY: invalid negative syscall number does not dereference pointers.
   let raw = unsafe { syscall3(-4095, 0, 0, 0) };

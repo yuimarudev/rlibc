@@ -841,6 +841,32 @@ fn fstatat_relative_path_with_dirfd_and_null_output_nofollow_sets_efault() {
 }
 
 #[test]
+fn fstatat_relative_path_with_dirfd_and_null_output_empty_path_flag_sets_efault() {
+  let temp_dir = TempDir::new();
+  let target_name = CString::new("dirfd_null_output_empty_flag.txt").expect("CString::new failed");
+  let target_path = temp_dir.path().join("dirfd_null_output_empty_flag.txt");
+  let dir = File::open(temp_dir.path()).expect("failed to open directory fd");
+
+  fs::write(&target_path, b"payload")
+    .expect("failed to create relative-path null-output empty-flag test file");
+
+  write_errno(EINVAL);
+
+  // SAFETY: `dirfd` and relative path are valid; null output pointer intentionally probes EFAULT.
+  let rc = unsafe {
+    fstatat(
+      dir.as_raw_fd(),
+      target_name.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(rc, -1);
+  assert_eq!(read_errno(), EFAULT);
+}
+
+#[test]
 fn fstatat_relative_dirfd_null_path_and_output_nofollow_sets_efault() {
   let temp_dir = TempDir::new();
   let dir = File::open(temp_dir.path()).expect("failed to open directory fd");

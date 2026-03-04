@@ -1388,6 +1388,16 @@ mod tests {
   }
 
   #[test]
+  fn has_help_flag_ignores_help_after_option_like_golden_equals_argument() {
+    let args = vec![
+      "--golden=--option-like-path.abi".to_string(),
+      "--help".to_string(),
+    ];
+
+    assert!(!super::has_help_flag(&args));
+  }
+
+  #[test]
   fn has_help_flag_ignores_help_after_double_dash_consumed_by_invalid_golden_value() {
     let args = vec![
       "--golden".to_string(),

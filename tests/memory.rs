@@ -1023,6 +1023,68 @@ fn memmove_non_overlapping_u128_buffers_match_copy_from_slice_for_all_ranges() {
 }
 
 #[test]
+fn memmove_non_overlapping_distinct_size_non_byte_buffers_match_copy_from_slice() {
+  let source = [0x1122_3344_u32, 0x5566_7788, 0x99aa_bbcc, 0xddee_ff00];
+  let source_before = source;
+  let initial_destination = [
+    0xa1a2_a3a4_a5a6_a7a8_u64,
+    0xb1b2_b3b4_b5b6_b7b8,
+    0xc1c2_c3c4_c5c6_c7c8,
+    0xd1d2_d3d4_d5d6_d7d8,
+    0xe1e2_e3e4_e5e6_e7e8,
+  ];
+  let source_total_bytes = core::mem::size_of_val(&source);
+  let destination_total_bytes = core::mem::size_of_val(&initial_destination);
+
+  for source_offset in 0..=source_total_bytes {
+    for destination_offset in 0..=destination_total_bytes {
+      let max_copy_len = core::cmp::min(
+        source_total_bytes - source_offset,
+        destination_total_bytes - destination_offset,
+      );
+
+      for copy_len in 0..=max_copy_len {
+        let mut actual_destination = initial_destination;
+        let mut expected_destination = initial_destination;
+
+        // SAFETY: arrays are live and range bounds above ensure in-bounds slices.
+        unsafe {
+          let source_bytes =
+            core::slice::from_raw_parts(source.as_ptr().cast::<u8>().add(source_offset), copy_len);
+          let expected_destination_bytes = core::slice::from_raw_parts_mut(
+            expected_destination
+              .as_mut_ptr()
+              .cast::<u8>()
+              .add(destination_offset),
+            copy_len,
+          );
+          expected_destination_bytes.copy_from_slice(source_bytes);
+        }
+
+        let destination = actual_destination
+          .as_mut_ptr()
+          .cast::<u8>()
+          .wrapping_add(destination_offset);
+        let source_ptr = source.as_ptr().cast::<u8>().wrapping_add(source_offset);
+        // SAFETY: pointers are derived from live arrays and bounded by checks above.
+        let returned =
+          unsafe { memmove(destination.cast(), source_ptr.cast(), sz(copy_len)) }.cast();
+
+        assert_eq!(
+          returned, destination,
+          "unexpected return pointer for src={source_offset}, dst={destination_offset}, len={copy_len}",
+        );
+        assert_eq!(
+          actual_destination, expected_destination,
+          "unexpected destination bytes for src={source_offset}, dst={destination_offset}, len={copy_len}",
+        );
+        assert_eq!(source, source_before, "source buffer mutated unexpectedly");
+      }
+    }
+  }
+}
+
+#[test]
 fn memmove_adjacent_forward_boundary_copies_as_non_overlap() {
   let mut buffer = [0_u8, 1, 2, 3, 4, 5];
   let source = buffer.as_ptr();
@@ -1530,6 +1592,22 @@ fn memcpy_zero_length_allows_same_dangling_pointer() {
   .cast::<u8>();
 
   assert_eq!(returned, dangling.as_ptr());
+}
+
+#[test]
+fn memcpy_zero_length_allows_same_dangling_pointer_with_distinct_alignment_origin() {
+  let dangling = core::ptr::NonNull::<u16>::dangling();
+  // SAFETY: `n == 0`, so dangling pointers are never dereferenced.
+  let returned = unsafe {
+    memcpy(
+      dangling.as_ptr().cast::<u8>().cast(),
+      dangling.as_ptr().cast::<u8>().cast_const().cast(),
+      sz(0),
+    )
+  }
+  .cast::<u8>();
+
+  assert_eq!(returned, dangling.as_ptr().cast::<u8>());
 }
 
 #[test]

@@ -1172,8 +1172,8 @@ fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_
 }
 
 #[test]
-fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure(
-) {
+fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure()
+ {
   let mut original = RLimit {
     rlim_cur: 0,
     rlim_max: 0,
@@ -1225,6 +1225,63 @@ fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_
   assert_eq!(
     second_errno, ENAMETOOLONG,
     "second successful _SC_OPEN_MAX query must preserve ENAMETOOLONG",
+  );
+}
+
+#[test]
+fn sysconf_open_max_one_soft_limit_repeated_success_preserves_efault_from_gethostname_null_failure()
+{
+  let mut original = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  // SAFETY: `original` points to writable storage for one `RLimit`.
+  let read_status = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut original) };
+
+  assert_eq!(read_status, 0, "getrlimit(RLIMIT_NOFILE) must succeed");
+  assert!(
+    original.rlim_max >= 1,
+    "setrlimit(RLIMIT_NOFILE, soft=1) requires hard limit >= 1",
+  );
+
+  let temporary = RLimit {
+    rlim_cur: 1,
+    rlim_max: original.rlim_max,
+  };
+  let _restore_guard = RLimitRestoreGuard {
+    resource: RLIMIT_NOFILE,
+    original,
+  };
+  // SAFETY: `temporary` points to initialized `RLimit` data.
+  let write_status = unsafe { setrlimit(RLIMIT_NOFILE, &raw const temporary) };
+
+  assert_eq!(
+    write_status, 0,
+    "setrlimit(RLIMIT_NOFILE, soft=1) must succeed",
+  );
+
+  set_errno(0);
+
+  // SAFETY: null `name` with nonzero `len` must fail with `EFAULT`.
+  let gethostname_result = unsafe { gethostname(core::ptr::null_mut(), 8 as size_t) };
+
+  assert_eq!(gethostname_result, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  let first_open_max = query(_SC_OPEN_MAX);
+  let first_errno = read_errno();
+  let second_open_max = query(_SC_OPEN_MAX);
+  let second_errno = read_errno();
+
+  assert_eq!(first_open_max, 1);
+  assert_eq!(second_open_max, 1);
+  assert_eq!(
+    first_errno, EFAULT,
+    "first successful _SC_OPEN_MAX query must preserve EFAULT",
+  );
+  assert_eq!(
+    second_errno, EFAULT,
+    "second successful _SC_OPEN_MAX query must preserve EFAULT",
   );
 }
 

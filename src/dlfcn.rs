@@ -282,10 +282,7 @@ fn normalize_dlsym_missing_symbol_detail(symbol_label: &str, detail: &str) -> Op
 
   let mut normalized = trimmed_detail;
 
-  loop {
-    let Some(after_symbol) = normalized.strip_prefix(symbol_label) else {
-      break;
-    };
+  while let Some(after_symbol) = normalized.strip_prefix(symbol_label) {
     let after_symbol = after_symbol.trim_start();
 
     if after_symbol.is_empty() {
@@ -295,7 +292,17 @@ fn normalize_dlsym_missing_symbol_detail(symbol_label: &str, detail: &str) -> Op
     let Some(after_separator) = after_symbol.strip_prefix(':') else {
       break;
     };
-    let collapsed = after_separator.trim_start_matches(':').trim_start();
+    let mut collapsed = after_separator;
+
+    loop {
+      let trimmed = collapsed.trim_start();
+      let Some(rest) = trimmed.strip_prefix(':') else {
+        collapsed = trimmed;
+        break;
+      };
+
+      collapsed = rest;
+    }
 
     if collapsed.is_empty() {
       return None;
@@ -703,6 +710,8 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 ///   before the host-detail colon (for example `<symbol> : detail`).
 /// - repeated colons after the symbol prefix are collapsed during
 ///   normalization (for example `<symbol>::detail`).
+/// - colon-collapsing also normalizes whitespace-delimited colon runs (for
+///   example `<symbol>: : detail`).
 /// - repeated `<symbol>:` prefix chains in host detail are also collapsed to
 ///   avoid duplicate symbol echoes in the final diagnostic.
 /// - host details containing only the symbol label (with optional surrounding
@@ -887,6 +896,23 @@ mod tests {
     set_dlsym_missing_symbol_message(
       c"dup_symbol".as_ptr(),
       Some("dup_symbol:: host loader unresolved entry"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(
+      message,
+      "rlibc: requested symbol was not found: dup_symbol: host loader unresolved entry",
+    );
+  }
+
+  #[test]
+  fn set_dlsym_missing_symbol_message_collapses_spaced_repeated_colons_after_symbol_prefix() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup_symbol".as_ptr(),
+      Some("dup_symbol: : host loader unresolved entry"),
     );
 
     let message = take_dlerror_message().expect("expected pending dlerror message");

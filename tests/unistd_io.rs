@@ -1670,6 +1670,27 @@ fn recv_invalid_fd_with_peek_and_dontwait_flags_returns_minus_one_and_errno_ebad
 }
 
 #[test]
+fn recv_invalid_fd_with_waitall_and_peek_flags_returns_minus_one_and_errno_ebadf() {
+  let mut byte = [0x27_u8; 1];
+
+  set_errno(0);
+
+  // SAFETY: `byte` is writable and fd is intentionally invalid.
+  let received = unsafe {
+    recv(
+      -1,
+      byte.as_mut_ptr().cast::<c_void>(),
+      sz(byte.len()),
+      MSG_WAITALL | MSG_PEEK,
+    )
+  };
+
+  assert_eq!(received, -1);
+  assert_eq!(errno_value(), EBADF);
+  assert_eq!(byte, [0x27_u8; 1]);
+}
+
+#[test]
 fn recv_dontwait_on_empty_socket_returns_eagain() {
   let (reader, _writer) = std::os::unix::net::UnixStream::pair()
     .expect("failed to create unix stream pair for dontwait recv test");

@@ -386,3 +386,10 @@ fn errno_linux_reserved_gaps_match_baseline_layout() {
   assert_eq!(EDEADLK, ERANGE + 1);
   assert_eq!(ENAMETOOLONG, EDEADLK + 1);
 }
+
+#[test]
+fn errno_not_supported_alias_preserves_socket_band_position() {
+  assert_eq!(ENOTSUP, EOPNOTSUPP);
+  assert_eq!(ENOTSUP, ESOCKTNOSUPPORT + 1);
+  assert_eq!(EPFNOSUPPORT, ENOTSUP + 1);
+}

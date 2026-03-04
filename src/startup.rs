@@ -915,6 +915,130 @@ mod tests {
   }
 
   #[test]
+  fn startup_main_preserves_repeated_valid_entries_with_mixed_skips() {
+    let _test_guards = lock_test();
+    let _environ_restore = EnvironRestore::capture();
+
+    reset_state();
+
+    let entry_align = mem::align_of::<InitFiniFn>();
+
+    if entry_align == 1 {
+      return;
+    }
+
+    let mut argv_storage = [ptr::null_mut::<c_char>(); 1];
+    let mut envp_storage = [ptr::null_mut::<c_char>(); 1];
+    let init_entries: [usize; 5] = [
+      init_first as *const () as usize,
+      0,
+      init_first as *const () as usize,
+      1,
+      init_second as *const () as usize,
+    ];
+    let fini_entries: [usize; 5] = [
+      fini_first as *const () as usize,
+      0,
+      fini_first as *const () as usize,
+      1,
+      fini_second as *const () as usize,
+    ];
+    let args = StartupArgs::new(1, argv_storage.as_mut_ptr(), envp_storage.as_mut_ptr());
+
+    assert_eq!(mem::size_of::<usize>(), mem::size_of::<InitFiniFn>());
+    assert_eq!(mem::align_of::<usize>(), mem::align_of::<InitFiniFn>());
+
+    let init_start = init_entries.as_ptr().cast::<InitFiniFn>();
+    let fini_start = fini_entries.as_ptr().cast::<InitFiniFn>();
+    // SAFETY: these pointers come from contiguous local arrays.
+    let init_end = unsafe { init_start.add(init_entries.len()) };
+    // SAFETY: these pointers come from contiguous local arrays.
+    let fini_end = unsafe { fini_start.add(fini_entries.len()) };
+    let init_range = InitFiniRange::new(init_start, init_end);
+    let fini_range = InitFiniRange::new(fini_start, fini_end);
+
+    // SAFETY: ranges are contiguous pointer-sized entries. Null and
+    // misaligned non-null slots should be skipped while preserving repeated
+    // valid entries.
+    let status =
+      unsafe { run_startup_main(test_main as StartMainFn, args, init_range, fini_range) };
+
+    assert_eq!(status, 77);
+    assert_eq!(snapshot_calls(), vec![1, 1, 2, 3, 5, 4, 4]);
+    assert_eq!(
+      OBSERVED_ENVIRON_DURING_INIT.load(Ordering::Relaxed),
+      envp_storage.as_mut_ptr() as usize,
+    );
+
+    // SAFETY: reading process-global pointer in test for assertion.
+    let bound_environ = unsafe { environ };
+
+    assert_eq!(bound_environ, envp_storage.as_mut_ptr());
+  }
+
+  #[test]
+  fn startup_main_preserves_repeated_valid_entries_with_mixed_skips() {
+    let _test_guards = lock_test();
+    let _environ_restore = EnvironRestore::capture();
+
+    reset_state();
+
+    let entry_align = mem::align_of::<InitFiniFn>();
+
+    if entry_align == 1 {
+      return;
+    }
+
+    let mut argv_storage = [ptr::null_mut::<c_char>(); 1];
+    let mut envp_storage = [ptr::null_mut::<c_char>(); 1];
+    let init_entries: [usize; 5] = [
+      init_first as *const () as usize,
+      0,
+      init_first as *const () as usize,
+      1,
+      init_second as *const () as usize,
+    ];
+    let fini_entries: [usize; 5] = [
+      fini_first as *const () as usize,
+      0,
+      fini_first as *const () as usize,
+      1,
+      fini_second as *const () as usize,
+    ];
+    let args = StartupArgs::new(1, argv_storage.as_mut_ptr(), envp_storage.as_mut_ptr());
+
+    assert_eq!(mem::size_of::<usize>(), mem::size_of::<InitFiniFn>());
+    assert_eq!(mem::align_of::<usize>(), mem::align_of::<InitFiniFn>());
+
+    let init_start = init_entries.as_ptr().cast::<InitFiniFn>();
+    let fini_start = fini_entries.as_ptr().cast::<InitFiniFn>();
+    // SAFETY: these pointers come from contiguous local arrays.
+    let init_end = unsafe { init_start.add(init_entries.len()) };
+    // SAFETY: these pointers come from contiguous local arrays.
+    let fini_end = unsafe { fini_start.add(fini_entries.len()) };
+    let init_range = InitFiniRange::new(init_start, init_end);
+    let fini_range = InitFiniRange::new(fini_start, fini_end);
+
+    // SAFETY: ranges are contiguous pointer-sized entries. Null and
+    // misaligned non-null slots should be skipped while preserving repeated
+    // valid entries.
+    let status =
+      unsafe { run_startup_main(test_main as StartMainFn, args, init_range, fini_range) };
+
+    assert_eq!(status, 77);
+    assert_eq!(snapshot_calls(), vec![1, 1, 2, 3, 5, 4, 4]);
+    assert_eq!(
+      OBSERVED_ENVIRON_DURING_INIT.load(Ordering::Relaxed),
+      envp_storage.as_mut_ptr() as usize,
+    );
+
+    // SAFETY: reading process-global pointer in test for assertion.
+    let bound_environ = unsafe { environ };
+
+    assert_eq!(bound_environ, envp_storage.as_mut_ptr());
+  }
+
+  #[test]
   fn startup_main_treats_null_init_and_fini_ranges_as_empty() {
     let _test_guards = lock_test();
     let _environ_restore = EnvironRestore::capture();

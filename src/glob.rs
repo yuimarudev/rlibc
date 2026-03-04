@@ -349,15 +349,6 @@ fn root_only_result_path(
   path
 }
 
-fn first_segment_is_dot_alias(segments: &[&[u8]], flags: c_int) -> bool {
-  let Some(first_segment) = segments.first() else {
-    return false;
-  };
-  let first_segment = unescape_segment(first_segment, flags);
-
-  first_segment == b"." || first_segment == b".."
-}
-
 fn bracket_match(
   pattern: &[u8],
   bracket_index: usize,
@@ -614,12 +605,11 @@ fn collect_matches(
   }
 
   let mut candidates = if is_absolute {
-    let root_prefix_count =
-      if leading_separators == 2 && first_segment_is_dot_alias(&segments, flags) {
-        1
-      } else {
-        leading_separators
-      };
+    let root_prefix_count = if leading_separators == 2 && segments.len() == 1 {
+      1
+    } else {
+      leading_separators
+    };
     let mut root_prefix = Vec::with_capacity(root_prefix_count);
 
     root_prefix.extend(std::iter::repeat_n(PATH_SEPARATOR, root_prefix_count));

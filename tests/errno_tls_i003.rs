@@ -2932,3 +2932,149 @@ fn three_level_nested_threads_keep_errno_zero_start_and_isolation() {
     "nested writes must not clobber main-thread errno"
   );
 }
+
+#[test]
+fn three_level_leaf_pointer_stays_stable_across_repeated_writes() {
+  const REPEATS: usize = 6;
+  const LEAF_START: c_int = 6100;
+
+  write_errno(-8181);
+
+  let main_slot = __errno_location() as usize;
+  let trunk_report = thread::spawn(|| {
+    let trunk_slot = __errno_location() as usize;
+    let trunk_zero = read_errno();
+
+    write_errno(4141);
+
+    let branch_report = thread::spawn(|| {
+      let branch_slot = __errno_location() as usize;
+      let branch_zero = read_errno();
+
+      write_errno(-5151);
+
+      let leaf_report = thread::spawn(|| {
+        let leaf_slot = __errno_location() as usize;
+        let leaf_zero = read_errno();
+        let mut pointer_pairs = Vec::new();
+        let mut value_pairs = Vec::new();
+        let mut next_value = LEAF_START;
+
+        for _ in 0..REPEATS {
+          let pointer_before_write = __errno_location() as usize;
+          let errno_before_write = read_errno();
+
+          write_errno(next_value);
+
+          let pointer_after_write = __errno_location() as usize;
+          let errno_after_write = read_errno();
+
+          pointer_pairs.push((pointer_before_write, pointer_after_write));
+          value_pairs.push((errno_before_write, errno_after_write));
+          next_value += 1;
+        }
+
+        let leaf_end = next_value - 1;
+
+        (leaf_slot, leaf_zero, pointer_pairs, value_pairs, leaf_end)
+      })
+      .join()
+      .expect("leaf thread panicked");
+      let branch_end = read_errno();
+
+      (branch_slot, branch_zero, branch_end, leaf_report)
+    })
+    .join()
+    .expect("branch thread panicked");
+    let trunk_end = read_errno();
+
+    (trunk_slot, trunk_zero, trunk_end, branch_report)
+  })
+  .join()
+  .expect("trunk thread panicked");
+  let (trunk_slot, trunk_zero, trunk_end, branch_report) = trunk_report;
+  let (branch_slot, branch_zero, branch_end, leaf_report) = branch_report;
+  let (leaf_slot, leaf_zero, pointer_pairs, value_pairs, leaf_end) = leaf_report;
+
+  assert_eq!(trunk_zero, 0, "trunk thread must start with zero errno");
+  assert_eq!(branch_zero, 0, "branch thread must start with zero errno");
+  assert_eq!(leaf_zero, 0, "leaf thread must start with zero errno");
+  assert_eq!(
+    trunk_end, 4141,
+    "branch/leaf writes must not clobber trunk errno"
+  );
+  assert_eq!(
+    branch_end, -5151,
+    "leaf writes must not clobber branch errno"
+  );
+  assert_eq!(
+    pointer_pairs.len(),
+    REPEATS,
+    "expected one pointer pair per leaf write",
+  );
+  assert_eq!(
+    value_pairs.len(),
+    REPEATS,
+    "expected one value pair per leaf write",
+  );
+
+  let mut previous_value = 0_i32;
+
+  for (expected_value, ((before_pointer, after_pointer), (before_errno, after_errno))) in
+    (LEAF_START..).zip(pointer_pairs.iter().zip(value_pairs.iter()))
+  {
+    assert_eq!(
+      *before_pointer, leaf_slot,
+      "leaf pointer before write must remain stable",
+    );
+    assert_eq!(
+      *after_pointer, leaf_slot,
+      "leaf pointer after write must remain stable",
+    );
+    assert_eq!(
+      *before_errno, previous_value,
+      "leaf errno before write must match previous leaf value",
+    );
+    assert_eq!(
+      *after_errno, expected_value,
+      "leaf errno after write must match current target value",
+    );
+
+    previous_value = expected_value;
+  }
+
+  assert_eq!(
+    leaf_end, previous_value,
+    "leaf final errno must match last write"
+  );
+  assert_ne!(
+    trunk_slot, main_slot,
+    "trunk thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    branch_slot, main_slot,
+    "branch thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    leaf_slot, main_slot,
+    "leaf thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    branch_slot, trunk_slot,
+    "branch thread must not share errno storage with trunk thread",
+  );
+  assert_ne!(
+    leaf_slot, branch_slot,
+    "leaf thread must not share errno storage with branch thread",
+  );
+  assert_eq!(
+    __errno_location() as usize,
+    main_slot,
+    "main-thread errno pointer must remain stable across repeated leaf writes",
+  );
+  assert_eq!(
+    read_errno(),
+    -8181,
+    "nested writes must not clobber main-thread errno",
+  );
+}
