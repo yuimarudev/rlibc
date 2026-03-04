@@ -703,6 +703,23 @@ fn crt_pipeline_summarizes_many_option_like_positionals_after_double_dash() {
 }
 
 #[test]
+fn crt_pipeline_summarizes_many_mixed_help_tokens_after_double_dash() {
+  let args = vec![
+    "--".to_string(),
+    "-h".to_string(),
+    "--help".to_string(),
+    "--cc".to_string(),
+    "--out-dir".to_string(),
+  ];
+  let output = run_pipeline(&args);
+
+  assert_pipeline_failure_contains(
+    &output,
+    "unexpected positional arguments: -h, --help, --cc (+1 more)",
+  );
+}
+
+#[test]
 fn crt_pipeline_double_dash_after_overrides_builds_requested_output_dir() {
   let output_dir = TempDirectory::create();
   let args = vec![

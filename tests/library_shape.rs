@@ -817,6 +817,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     "project_name_cstr() payload should match project_name() bytes"
   );
   assert_eq!(
+    c_name.to_str().ok(),
+    Some(rlibc::project_name()),
+    "project_name_cstr() should decode as UTF-8 equal to project_name()"
+  );
+  assert_eq!(
     c_name.as_ptr(),
     rlibc::project_name_cstr_ptr(),
     "project_name_cstr() pointer should match project_name_cstr_ptr()"

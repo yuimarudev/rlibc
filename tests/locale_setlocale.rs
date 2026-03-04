@@ -2496,6 +2496,58 @@ fn setlocale_empty_lc_all_uses_supported_category_variables_and_preserves_errno(
 }
 
 #[test]
+fn setlocale_empty_category_locale_with_empty_lc_all_supported_category_and_non_utf8_lang_preserves_errno_for_all_categories()
+ {
+  let _env_lock = lock_locale_environment();
+  let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
+
+  for &(category, variable) in &CATEGORY_VARIABLES {
+    clear_locale_environment();
+    set_locale_environment("LC_ALL", "");
+    set_locale_environment(variable, "POSIX");
+    set_locale_environment_raw_bytes("LANG", &[0xFF]);
+
+    let expected_errno = 4200 + category;
+
+    write_errno(expected_errno);
+
+    // SAFETY: argument points to a valid NUL-terminated locale string (`""`).
+    let locale_ptr = unsafe { setlocale(category, as_c_ptr(b"\0")) };
+
+    assert!(
+      !locale_ptr.is_null(),
+      "category {category} should prefer {variable}=POSIX over non-UTF-8 LANG fallback when LC_ALL is empty",
+    );
+    assert_eq!(locale_name(locale_ptr), b"C");
+    assert_eq!(read_errno(), expected_errno);
+  }
+}
+
+#[test]
+fn setlocale_empty_lc_all_with_supported_category_variables_and_non_utf8_lang_preserves_errno() {
+  let _env_lock = lock_locale_environment();
+  let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
+
+  clear_locale_environment();
+  set_locale_environment("LC_ALL", "");
+
+  for &(_, variable) in &CATEGORY_VARIABLES {
+    set_locale_environment(variable, "POSIX");
+  }
+
+  set_locale_environment_raw_bytes("LANG", &[0xFF]);
+
+  write_errno(4306);
+
+  // SAFETY: argument points to a valid NUL-terminated locale string (`""`).
+  let locale_ptr = unsafe { setlocale(LC_ALL, as_c_ptr(b"\0")) };
+
+  assert!(!locale_ptr.is_null());
+  assert_eq!(locale_name(locale_ptr), b"C");
+  assert_eq!(read_errno(), 4306);
+}
+
+#[test]
 fn setlocale_empty_category_locale_with_empty_lc_all_prefers_category_variable_and_preserves_errno()
 {
   let _env_lock = lock_locale_environment();

@@ -1126,6 +1126,36 @@ fn clock_gettime_success_after_gettimeofday_invalid_tv_with_valid_timezone_failu
 }
 
 #[test]
+fn clock_gettime_monotonic_success_after_gettimeofday_invalid_tv_with_valid_timezone_failure_keeps_errno_efault()
+ {
+  let mut tz = timezone {
+    tz_minuteswest: 0,
+    tz_dsttime: 0,
+  };
+  let mut ts = timespec {
+    tv_sec: -1,
+    tv_nsec: -1,
+  };
+
+  write_errno(0);
+  // SAFETY: `tv` is intentionally invalid while `tz` is valid writable storage.
+  let fail_rc = unsafe { gettimeofday(std::ptr::dangling_mut::<timeval>(), &raw mut tz) };
+
+  assert_eq!(fail_rc, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  let ok_rc = clock_gettime(CLOCK_MONOTONIC, &raw mut ts);
+
+  assert_eq!(ok_rc, 0);
+  assert_eq!(read_errno(), EFAULT);
+  assert!(ts.tv_sec >= 0, "tv_sec must be non-negative");
+  assert!(
+    (0..1_000_000_000).contains(&ts.tv_nsec),
+    "tv_nsec must be in [0, 1_000_000_000)",
+  );
+}
+
+#[test]
 fn clock_gettime_success_after_gettimeofday_invalid_tv_null_timezone_failure_keeps_errno_efault() {
   let mut ts = timespec {
     tv_sec: -1,

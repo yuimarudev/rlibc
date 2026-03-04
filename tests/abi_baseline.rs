@@ -101,6 +101,14 @@ fn size_types_follow_lp64_word_contract() {
 }
 
 #[test]
+fn size_types_match_pointer_word_width() {
+  assert_eq!(size_of::<size_t>(), size_of::<*const c_void>());
+  assert_eq!(align_of::<size_t>(), align_of::<*const c_void>());
+  assert_eq!(size_of::<ssize_t>(), size_of::<*const c_void>());
+  assert_eq!(align_of::<ssize_t>(), align_of::<*const c_void>());
+}
+
+#[test]
 fn c_type_aliases_match_x86_64_linux_signedness_contract() {
   assert!(c_char::MIN < 0 as c_char);
   assert!(c_schar::MIN < 0 as c_schar);

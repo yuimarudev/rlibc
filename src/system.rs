@@ -750,6 +750,17 @@ mod tests {
   }
 
   #[test]
+  fn configured_processor_count_uses_present_file_when_possible_has_trailing_empty_token() {
+    let count = configured_processor_count_with(
+      || Some(String::from("0-1,")),
+      || Some(String::from("0-3")),
+      || 9,
+    );
+
+    assert_eq!(count, 4);
+  }
+
+  #[test]
   fn configured_processor_count_uses_present_file_when_possible_file_has_signed_tokens() {
     let count = configured_processor_count_with(
       || Some(String::from("+0-1")),

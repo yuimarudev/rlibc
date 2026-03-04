@@ -913,6 +913,9 @@ fn exit_runs_all_handlers_in_lifo_order_and_preserves_status_code() {
 fn abort_skips_atexit_handlers() {
   let output = run_child_scenario(SCENARIO_ABORT);
   let output_context = format_output(&output);
+  let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
+  let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
+  let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let handler_markers = marker_occurrences(&output.stdout, b"{H}");
   let ordered_marker_count = marker_occurrences(&output.stdout, b"{1}")
     + marker_occurrences(&output.stdout, b"{2}")
@@ -932,6 +935,18 @@ fn abort_skips_atexit_handlers() {
     output.status.code(),
     None,
     "abort scenario should terminate via signal, not exit status: {output_context}"
+  );
+  assert!(
+    runner_banner_count >= 1,
+    "abort scenario should start child test harness before signal termination: {output_context}"
+  );
+  assert_eq!(
+    child_entrypoint_count, 0,
+    "abort scenario should terminate before child test completion marker: {output_context}"
+  );
+  assert_eq!(
+    failed_marker_count, 0,
+    "abort scenario should terminate before child harness FAILED summary in stdout: {output_context}"
   );
   assert!(
     !output.stdout.windows(3).any(|window| window == b"{X}"),

@@ -1434,6 +1434,14 @@ fn command_uses_supported_runtest_prefix_rejects_empty_workload_path_segment() {
 }
 
 #[test]
+fn command_uses_supported_runtest_prefix_rejects_trailing_workload_path_separator() {
+  assert!(
+    !command_uses_supported_runtest_prefix("runtest -w functional/"),
+    "trailing workload path separator must be rejected by manifest contract helper"
+  );
+}
+
+#[test]
 fn command_uses_supported_runtest_prefix_rejects_invalid_workload_paths_for_bin_runtest_prefixes() {
   let invalid_workloads = [
     "/functional/argv",
@@ -1443,6 +1451,7 @@ fn command_uses_supported_runtest_prefix_rejects_invalid_workload_paths_for_bin_
     "..",
     "functional/./argv",
     "functional/.",
+    "functional/",
     "functional//argv",
     "functional/../argv",
     "functional/..",
@@ -1470,6 +1479,7 @@ fn command_uses_supported_runtest_prefix_rejects_invalid_workload_paths_for_dot_
     "..",
     "functional/./argv",
     "functional/.",
+    "functional/",
     "functional//argv",
     "functional/../argv",
     "functional/..",
@@ -1495,6 +1505,7 @@ fn command_uses_supported_runtest_prefix_rejects_invalid_workload_paths_for_bare
     "..",
     "functional/./argv",
     "functional/.",
+    "functional/",
     "functional//argv",
     "functional/../argv",
     "functional/..",

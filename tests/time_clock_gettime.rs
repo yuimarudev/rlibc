@@ -3,10 +3,10 @@ use rlibc::abi::errno::{EFAULT, EINVAL};
 use rlibc::abi::types::c_int;
 use rlibc::errno::__errno_location;
 use rlibc::time::{
-  clock_gettime, clockid_t, clockid_to_fd, fd_to_clockid, timespec, CLOCKFD, CLOCK_BOOTTIME,
-  CLOCK_BOOTTIME_ALARM, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE, CLOCK_MONOTONIC_RAW,
-  CLOCK_PROCESS_CPUTIME_ID, CLOCK_REALTIME, CLOCK_REALTIME_ALARM, CLOCK_REALTIME_COARSE,
-  CLOCK_SGI_CYCLE, CLOCK_TAI, CLOCK_THREAD_CPUTIME_ID,
+  CLOCK_BOOTTIME, CLOCK_BOOTTIME_ALARM, CLOCK_MONOTONIC, CLOCK_MONOTONIC_COARSE,
+  CLOCK_MONOTONIC_RAW, CLOCK_PROCESS_CPUTIME_ID, CLOCK_REALTIME, CLOCK_REALTIME_ALARM,
+  CLOCK_REALTIME_COARSE, CLOCK_SGI_CYCLE, CLOCK_TAI, CLOCK_THREAD_CPUTIME_ID, CLOCKFD,
+  clock_gettime, clockid_t, clockid_to_fd, fd_to_clockid, timespec,
 };
 
 fn read_errno() -> c_int {
@@ -665,8 +665,8 @@ fn clock_gettime_invalid_clock_id_set_after_null_timespec_overwrites_errno_with_
 }
 
 #[test]
-fn clock_gettime_invalid_clock_id_set_after_invalid_clock_id_set_with_null_timespec_overwrites_errno_with_einval(
-) {
+fn clock_gettime_invalid_clock_id_set_after_invalid_clock_id_set_with_null_timespec_overwrites_errno_with_einval()
+ {
   let invalid_clock_ids: [clockid_t; 4] = [-1, 9_999, c_int::MIN, c_int::MAX];
 
   for (index, invalid_clock_id) in invalid_clock_ids.iter().enumerate() {
@@ -692,8 +692,8 @@ fn clock_gettime_invalid_clock_id_set_after_invalid_clock_id_set_with_null_times
 }
 
 #[test]
-fn clock_gettime_monotonic_success_after_invalid_clock_id_set_with_null_timespec_keeps_errno_efault(
-) {
+fn clock_gettime_monotonic_success_after_invalid_clock_id_set_with_null_timespec_keeps_errno_efault()
+ {
   let invalid_clock_ids: [clockid_t; 4] = [-1, 9_999, c_int::MIN, c_int::MAX];
 
   for (index, invalid_clock_id) in invalid_clock_ids.iter().enumerate() {
@@ -746,8 +746,8 @@ fn clock_gettime_realtime_success_after_invalid_clock_id_set_with_null_timespec_
 }
 
 #[test]
-fn clock_gettime_all_exported_clock_ids_after_invalid_clock_id_set_with_null_timespec_follow_kernel_errno_contract(
-) {
+fn clock_gettime_all_exported_clock_ids_after_invalid_clock_id_set_with_null_timespec_follow_kernel_errno_contract()
+ {
   let invalid_clock_ids: [clockid_t; 4] = [-1, 9_999, c_int::MIN, c_int::MAX];
   let valid_clock_ids: [clockid_t; 12] = [
     CLOCK_REALTIME,
@@ -1772,8 +1772,8 @@ fn clock_gettime_dynamic_clock_id_alias_set_after_null_timespec_preserves_output
 }
 
 #[test]
-fn clock_gettime_monotonic_success_after_dynamic_clock_id_alias_set_null_timespec_keeps_errno_efault(
-) {
+fn clock_gettime_monotonic_success_after_dynamic_clock_id_alias_set_null_timespec_keeps_errno_efault()
+ {
   let dynamic_clock_ids: [clockid_t; 3] = [
     fd_to_clockid(-1),
     fd_to_clockid(-2),
@@ -1803,8 +1803,8 @@ fn clock_gettime_monotonic_success_after_dynamic_clock_id_alias_set_null_timespe
 }
 
 #[test]
-fn clock_gettime_realtime_success_after_dynamic_clock_id_alias_set_null_timespec_keeps_errno_efault(
-) {
+fn clock_gettime_realtime_success_after_dynamic_clock_id_alias_set_null_timespec_keeps_errno_efault()
+ {
   let dynamic_clock_ids: [clockid_t; 3] = [
     fd_to_clockid(-1),
     fd_to_clockid(-2),
@@ -1916,6 +1916,37 @@ fn invalid_clock_id_after_dynamic_alias_null_timespec_overwrites_errno_with_einv
     assert_eq!(read_errno(), EFAULT);
 
     let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
+
+    assert_eq!(invalid_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(invalid_ts, before);
+  }
+}
+
+#[test]
+fn max_positive_invalid_clock_id_after_dynamic_alias_null_timespec_overwrites_errno_with_einval() {
+  let dynamic_clock_ids: [clockid_t; 3] = [
+    fd_to_clockid(-1),
+    fd_to_clockid(-2),
+    fd_to_clockid(c_int::MAX),
+  ];
+
+  for (index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    let mut invalid_ts = timespec {
+      tv_sec: 30_000 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 40_000 + i64::try_from(index).unwrap_or(0),
+    };
+    let before = invalid_ts;
+
+    write_errno(EINVAL);
+
+    let null_result = clock_gettime(*dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
+
+    let invalid_clock_id: clockid_t = c_int::MAX;
+    let invalid_result = clock_gettime(invalid_clock_id, &raw mut invalid_ts);
 
     assert_eq!(invalid_result, -1);
     assert_eq!(read_errno(), EINVAL);
@@ -2098,8 +2129,8 @@ fn clock_gettime_null_timespec_after_max_positive_invalid_clock_id_overwrites_er
 }
 
 #[test]
-fn clock_gettime_null_timespec_after_extreme_negative_invalid_clock_id_overwrites_errno_with_efault(
-) {
+fn clock_gettime_null_timespec_after_extreme_negative_invalid_clock_id_overwrites_errno_with_efault()
+ {
   let mut invalid_ts = timespec {
     tv_sec: 35,
     tv_nsec: 46,
@@ -2191,8 +2222,8 @@ fn clock_gettime_max_positive_invalid_clock_id_after_null_timespec_overwrites_er
 }
 
 #[test]
-fn clock_gettime_extreme_negative_invalid_clock_id_after_null_timespec_overwrites_errno_with_einval(
-) {
+fn clock_gettime_extreme_negative_invalid_clock_id_after_null_timespec_overwrites_errno_with_einval()
+ {
   let mut invalid_ts = timespec {
     tv_sec: 99,
     tv_nsec: 111,

@@ -1434,8 +1434,8 @@ fn setvbuf_line_buffered_mode_flushes_dynamic_width_and_precision_percent_s_newl
 }
 
 #[test]
-fn setvbuf_line_buffered_mode_flushes_negative_dynamic_width_and_precision_percent_s_newline_within_cutoff(
-) {
+fn setvbuf_line_buffered_mode_flushes_negative_dynamic_width_and_precision_percent_s_newline_within_cutoff()
+ {
   let _guard = test_lock();
   let format = b"%*.*s\0";
   let payload = b"ab\ncd\0";

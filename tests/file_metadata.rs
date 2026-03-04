@@ -1491,6 +1491,48 @@ fn fstatat_relative_path_with_non_directory_fd_sets_enotdir_with_nofollow() {
 }
 
 #[test]
+fn fstatat_relative_path_with_non_directory_fd_sets_enotdir_with_empty_path_flag() {
+  let temp_dir = TempDir::new();
+  let non_directory_path = temp_dir.path().join("not_a_directory_empty_flag.txt");
+  let child_name = CString::new("child").expect("CString::new failed");
+  let mut stat_buf = Stat::default();
+
+  fs::write(&non_directory_path, b"payload").expect("failed to create non-directory file");
+
+  let non_directory = File::open(&non_directory_path).expect("failed to open non-directory file");
+
+  write_errno(EINVAL);
+
+  // SAFETY: output pointer and C string are valid; `dirfd` intentionally references a regular file.
+  let empty_path_flag_rc = unsafe {
+    fstatat(
+      non_directory.as_raw_fd(),
+      child_name.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(empty_path_flag_rc, -1);
+  assert_eq!(read_errno(), ENOTDIR);
+
+  write_errno(EBADF);
+
+  // SAFETY: output pointer and C string are valid; combined supported flags still require path resolution.
+  let combined_flags_rc = unsafe {
+    fstatat(
+      non_directory.as_raw_fd(),
+      child_name.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(combined_flags_rc, -1);
+  assert_eq!(read_errno(), ENOTDIR);
+}
+
+#[test]
 fn fstatat_relative_dirfd_missing_path_sets_enoent() {
   let temp_dir = TempDir::new();
   let missing_name = CString::new("missing-entry.txt").expect("CString::new failed");

@@ -528,6 +528,48 @@ memcpy
 }
 
 #[test]
+fn abi_check_binary_rejects_trailing_whitespace_only_line_inside_symbols_block_in_golden_snapshot()
+{
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("trailing-whitespace-only-line-inside-symbols");
+  let snapshot_contents = concat!(
+    "ABI_SNAPSHOT_V1\n",
+    "ELF_CLASS=ELF64\n",
+    "ELF_MACHINE=Advanced Micro Devices X86-64\n",
+    "SYMBOLS:\n",
+    "abort\n",
+    " \t \n",
+  );
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("trailing-whitespace-only-line-inside-symbols fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject trailing whitespace-only lines inside SYMBOLS block\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("invalid trailing whitespace-only line inside `SYMBOLS:` block"),
+    "abi_check stderr must explain trailing whitespace-only line rejection inside SYMBOLS block\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
 fn abi_check_binary_rejects_symbol_entries_with_trailing_semicolon_in_golden_snapshot() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)

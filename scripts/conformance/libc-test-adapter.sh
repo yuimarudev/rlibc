@@ -210,6 +210,10 @@ runtest_command_has_arguments() {
       return 1
     fi
 
+    if [[ "${workload}" == */ ]]; then
+      return 1
+    fi
+
     if [[ "${workload}" == *"//"* ]]; then
       return 1
     fi

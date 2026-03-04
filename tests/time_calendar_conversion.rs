@@ -2443,13 +2443,25 @@ fn mktime_large_negative_tm_isdst_matches_minus_one_for_day_carry_boundary_at_tm
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(large_negative_errno, ERANGE);
+    assert_eq!(isdst_unknown, seed);
+    assert_eq!(isdst_large_negative.tm_sec, seed.tm_sec);
+    assert_eq!(isdst_large_negative.tm_min, seed.tm_min);
+    assert_eq!(isdst_large_negative.tm_hour, seed.tm_hour);
+    assert_eq!(isdst_large_negative.tm_mday, seed.tm_mday);
+    assert_eq!(isdst_large_negative.tm_mon, seed.tm_mon);
+    assert_eq!(isdst_large_negative.tm_year, seed.tm_year);
+    assert_eq!(isdst_large_negative.tm_wday, seed.tm_wday);
+    assert_eq!(isdst_large_negative.tm_yday, seed.tm_yday);
+    assert_eq!(isdst_large_negative.tm_isdst, -7);
+    assert_eq!(isdst_large_negative.tm_gmtoff, seed.tm_gmtoff);
+    assert_eq!(isdst_large_negative.tm_zone, seed.tm_zone);
   } else {
     assert_eq!(unknown_errno, 628);
     assert_eq!(large_negative_errno, 629);
     assert_normalized_calendar_metadata(&isdst_large_negative);
     assert_utc_baseline_output_fields(&isdst_large_negative);
+    assert_eq!(isdst_large_negative, isdst_unknown);
   }
-  assert_eq!(isdst_large_negative, isdst_unknown);
 }
 
 #[test]
@@ -2492,13 +2504,25 @@ fn mktime_large_negative_tm_isdst_day_carry_boundary_keeps_errno_thread_local_ac
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
+      assert_eq!(unknown, seed);
+      assert_eq!(value.tm_sec, seed.tm_sec);
+      assert_eq!(value.tm_min, seed.tm_min);
+      assert_eq!(value.tm_hour, seed.tm_hour);
+      assert_eq!(value.tm_mday, seed.tm_mday);
+      assert_eq!(value.tm_mon, seed.tm_mon);
+      assert_eq!(value.tm_year, seed.tm_year);
+      assert_eq!(value.tm_wday, seed.tm_wday);
+      assert_eq!(value.tm_yday, seed.tm_yday);
+      assert_eq!(value.tm_isdst, -7);
+      assert_eq!(value.tm_gmtoff, seed.tm_gmtoff);
+      assert_eq!(value.tm_zone, seed.tm_zone);
     } else {
       assert_eq!(unknown_errno, 791);
       assert_eq!(result_errno, 792);
       assert_normalized_calendar_metadata(&value);
       assert_utc_baseline_output_fields(&value);
+      assert_eq!(value, unknown);
     }
-    assert_eq!(value, unknown);
 
     (unknown_result, result_errno)
   })

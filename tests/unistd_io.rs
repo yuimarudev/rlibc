@@ -1480,6 +1480,26 @@ fn send_invalid_fd_with_nosignal_and_dontwait_flags_returns_minus_one_and_errno_
 }
 
 #[test]
+fn send_invalid_fd_with_nosignal_flag_returns_minus_one_and_errno_ebadf() {
+  let payload = [0x16_u8];
+
+  set_errno(0);
+
+  // SAFETY: payload pointer is valid and fd is intentionally invalid.
+  let sent = unsafe {
+    send(
+      -1,
+      payload.as_ptr().cast::<c_void>(),
+      sz(payload.len()),
+      MSG_NOSIGNAL,
+    )
+  };
+
+  assert_eq!(sent, -1);
+  assert_eq!(errno_value(), EBADF);
+}
+
+#[test]
 fn send_invalid_fd_with_zero_length_and_nosignal_and_dontwait_flags_returns_minus_one_and_errno_ebadf()
  {
   let payload = [0x15_u8];

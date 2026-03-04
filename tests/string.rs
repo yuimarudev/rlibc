@@ -511,6 +511,20 @@ fn strnlen_is_monotonic_and_caps_at_nul_for_utf8_offset_pointer() {
 }
 
 #[test]
+fn strnlen_caps_at_nul_for_large_finite_bound_on_utf8_offset_pointer() {
+  let input = b"\xE5\xAF\xBF\xE5\x8F\xB8\0";
+  let base_ptr = as_c_char_ptr(input);
+  // SAFETY: offset by 3 bytes stays within `input`.
+  let offset_ptr = unsafe { base_ptr.add(3) };
+  // SAFETY: `offset_ptr` points to a valid NUL-terminated byte sequence.
+  let full_len = unsafe { strlen(offset_ptr) };
+  // SAFETY: scanning stops at in-bounds NUL before bound is exhausted.
+  let bounded_len = unsafe { strnlen(offset_ptr, 64) };
+
+  assert_eq!(bounded_len, full_len);
+}
+
+#[test]
 fn strnlen_returns_zero_for_zero_bound_on_utf8_offset_pointer() {
   let input = b"\xE5\xAF\xBF\xE5\x8F\xB8\0";
   let base_ptr = as_c_char_ptr(input);

@@ -259,6 +259,7 @@ fn pthread_rwlock_can_reinitialize_with_invalid_attr_payload_after_destroy() {
   let first_destroy = unsafe { pthread_rwlock_destroy(rwlock_ptr) };
 
   assert_eq!(first_destroy, 0);
+
   let mut attr = pthread_rwlockattr_t { __size: [0_u8; 8] };
   let attr_ptr = ptr::from_mut(&mut attr);
   // SAFETY: `attr_ptr` points to writable storage for native rwlock attrs.
@@ -1044,6 +1045,36 @@ fn pthread_rwlock_repeated_failed_trywrlock_while_reader_held_preserves_reader_d
   assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
   // SAFETY: no ownership remains; extra unlock must fail.
   assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, EINVAL);
+  // SAFETY: lock is initialized and unlocked.
+  assert_eq!(unsafe { pthread_rwlock_destroy(rwlock_ptr) }, 0);
+}
+
+#[test]
+fn pthread_rwlock_failed_trywrlock_while_reader_held_allows_writer_after_release() {
+  let mut rwlock = new_rwlock();
+
+  init_rwlock(&mut rwlock);
+
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+
+  // SAFETY: `rwlock_ptr` points to initialized lock storage.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+  // SAFETY: recursive reader acquisition by the same thread is supported.
+  assert_eq!(unsafe { pthread_rwlock_tryrdlock(rwlock_ptr) }, 0);
+
+  for _ in 0..3 {
+    // SAFETY: writer try-reentry while current thread holds read ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+  }
+
+  // SAFETY: release one recursive reader depth.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: release the final reader depth.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: after reader release, writer try-lock should succeed.
+  assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, 0);
+  // SAFETY: current thread now holds writer ownership.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
   // SAFETY: lock is initialized and unlocked.
   assert_eq!(unsafe { pthread_rwlock_destroy(rwlock_ptr) }, 0);
 }

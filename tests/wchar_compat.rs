@@ -1490,6 +1490,41 @@ fn wctomb_null_reset_with_invalid_wc_allows_fresh_mbtowc_ascii_decode() {
 }
 
 #[test]
+fn wctomb_null_reset_with_invalid_wc_allows_fresh_mbtowc_ascii_decode_with_output() {
+  let prefix = [0xE3_u8, 0x81_u8];
+  let ascii = [b'M', 0_u8];
+  let mut wide: wchar_t = -1;
+
+  // SAFETY: null reset call is part of C API contract.
+  let mbtowc_reset = unsafe { mbtowc(core::ptr::null_mut(), core::ptr::null(), to_size_t(0)) };
+
+  assert_eq!(mbtowc_reset, 0);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and readable for `n` bytes.
+  let partial = unsafe { mbtowc(core::ptr::null_mut(), prefix.as_ptr().cast(), to_size_t(2)) };
+
+  assert_eq!(partial, -1);
+  assert_eq!(errno_value(), EILSEQ);
+
+  set_errno(3223);
+  // SAFETY: null destination requests reset and ignores `wc`.
+  let wctomb_reset = unsafe { wctomb(core::ptr::null_mut(), 0xD800) };
+
+  assert_eq!(wctomb_reset, 0);
+  assert_eq!(errno_value(), 3223);
+  assert_eq!(wide, -1);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and readable for `n` bytes.
+  let recovered = unsafe { mbtowc(&raw mut wide, ascii.as_ptr().cast(), to_size_t(1)) };
+
+  assert_eq!(recovered, 1);
+  assert_eq!(wide, i32::from(b'M'));
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
 fn wctomb_null_reset_with_valid_wc_discards_mbtowc_pending_state() {
   let prefix = [0xE3_u8, 0x81_u8];
   let suffix = [0x82_u8, 0_u8];

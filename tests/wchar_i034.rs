@@ -2700,6 +2700,62 @@ fn wcsrtombs_null_dst_corrupted_state_sets_eilseq_and_resets_for_next_call() {
 }
 
 #[test]
+fn wcsrtombs_null_dst_reserved_state_sets_eilseq_and_resets_for_next_call() {
+  let input = [i32::from(b'A'), 0_i32];
+  let mut src = input.as_ptr();
+  let original = src;
+  let mut state = mbstate_t::new();
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[0]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 1, 0];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(0);
+
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let first = unsafe { wcsrtombs(ptr::null_mut(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(first, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(src, original);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let second = unsafe { wcsrtombs(ptr::null_mut(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(second, sz(1));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn wcsrtombs_null_dst_second_reserved_byte_state_sets_eilseq_and_resets_for_next_call() {
+  let input = [i32::from(b'A'), 0_i32];
+  let mut src = input.as_ptr();
+  let original = src;
+  let mut state = mbstate_t::new();
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[1]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 0, 1];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(0);
+
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let first = unsafe { wcsrtombs(ptr::null_mut(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(first, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(src, original);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let second = unsafe { wcsrtombs(ptr::null_mut(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(second, sz(1));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
 fn wcsrtombs_invalid_wchar_resets_pending_state() {
   let prefix = [0xE3_u8, 0x81];
   let suffix = [0x82_u8, 0_u8];

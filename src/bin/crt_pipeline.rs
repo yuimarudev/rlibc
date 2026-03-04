@@ -668,6 +668,23 @@ mod tests {
   }
 
   #[test]
+  fn parse_args_summarizes_many_mixed_help_tokens_after_double_dash() {
+    let error = parse_args(&[
+      "--".to_string(),
+      "-h".to_string(),
+      "--help".to_string(),
+      "--cc".to_string(),
+      "--out-dir".to_string(),
+    ])
+    .expect_err("many mixed help tokens after double dash must be summarized");
+
+    assert_eq!(
+      error,
+      "unexpected positional arguments: -h, --help, --cc (+1 more)"
+    );
+  }
+
+  #[test]
   fn parse_args_accepts_double_dash_after_overrides() {
     let args = vec![
       "--out-dir".to_string(),

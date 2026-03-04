@@ -683,6 +683,29 @@ fn adapter_rejects_runtest_prefix_with_empty_workload_path_segment() {
 }
 
 #[test]
+fn adapter_rejects_runtest_prefix_with_trailing_workload_path_separator() {
+  let temp_dir = TempDirGuard::new("i060-runtest-trailing-workload-path-separator");
+  let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+
+  write_text(&manifest_path, "case-a|runtest -w functional/\n");
+
+  let arguments = vec![
+    "--dry-run".to_string(),
+    "--profile".to_string(),
+    manifest_path.to_string_lossy().into_owned(),
+  ];
+  let output = run_adapter(&arguments);
+  let stderr = stderr_text(&output);
+
+  assert!(
+    !output.status.success(),
+    "trailing workload path separator must fail"
+  );
+  assert!(stderr.contains("runtest smoke command requires explicit arguments"));
+  assert!(stderr.contains("line 1"));
+}
+
+#[test]
 fn adapter_rejects_bin_runtest_prefix_with_invalid_workload_paths() {
   let invalid_workloads = [
     "/functional/argv",
@@ -692,6 +715,7 @@ fn adapter_rejects_bin_runtest_prefix_with_invalid_workload_paths() {
     "..",
     "functional/./argv",
     "functional/.",
+    "functional/",
     "functional//argv",
     "functional/../argv",
     "functional/..",
@@ -736,6 +760,7 @@ fn adapter_rejects_dot_runtest_prefix_with_invalid_workload_paths() {
     "..",
     "functional/./argv",
     "functional/.",
+    "functional/",
     "functional//argv",
     "functional/../argv",
     "functional/..",
@@ -774,6 +799,7 @@ fn adapter_rejects_bare_runtest_prefix_with_invalid_workload_paths() {
     "..",
     "functional/./argv",
     "functional/.",
+    "functional/",
     "functional//argv",
     "functional/../argv",
     "functional/..",

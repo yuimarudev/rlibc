@@ -1177,6 +1177,33 @@ fn getnameinfo_name_required_with_numerichost_and_zero_host_length_returns_overf
 }
 
 #[test]
+fn getnameinfo_service_only_name_required_with_numerichost_and_zero_service_length_returns_overflow_first()
+ {
+  let mut service = [0x58_i8; 16];
+
+  // SAFETY: service buffer is writable. `servlen=0` with non-null `serv` must
+  // return `EAI_OVERFLOW` before address validation; `hostlen` is ignored
+  // because `host == NULL`.
+  let status = unsafe {
+    getnameinfo(
+      core::ptr::null(),
+      slen(0),
+      core::ptr::null_mut(),
+      slen(64),
+      service.as_mut_ptr(),
+      slen(0),
+      NI_NAMEREQD | NI_NUMERICHOST,
+    )
+  };
+
+  assert_eq!(status, EAI_OVERFLOW);
+  assert!(
+    service.iter().all(|&byte| byte == 0x58_i8),
+    "service output must remain untouched on zero-length service EAI_OVERFLOW",
+  );
+}
+
+#[test]
 fn getnameinfo_name_required_host_only_error_leaves_host_unmodified() {
   let address = sockaddr_in {
     sin_family: af_inet_family(),

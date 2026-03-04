@@ -314,6 +314,27 @@ fn gethostname_matches_uname_nodename_with_large_buffer() {
 }
 
 #[test]
+fn gethostname_repeated_success_keeps_errno_sentinel() {
+  let expected = nodename_from_uname();
+  let mut first = [0x24 as c_char; 256];
+  let mut second = [0x57 as c_char; 256];
+
+  write_errno(271);
+
+  let first_result = unsafe { gethostname(first.as_mut_ptr(), first.len() as size_t) };
+  let first_errno = read_errno();
+  let second_result = unsafe { gethostname(second.as_mut_ptr(), second.len() as size_t) };
+  let second_errno = read_errno();
+
+  assert_eq!(first_result, 0);
+  assert_eq!(second_result, 0);
+  assert_eq!(first_errno, 271);
+  assert_eq!(second_errno, 271);
+  assert_eq!(c_field_bytes(&first), expected);
+  assert_eq!(c_field_bytes(&second), expected);
+}
+
+#[test]
 fn gethostname_success_only_writes_nodename_and_nul() {
   let expected = nodename_from_uname();
   let required = expected.len() + 1;
