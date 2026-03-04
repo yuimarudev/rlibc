@@ -1263,6 +1263,43 @@ fn getaddrinfo_resolves_www_http_service_name_without_ai_numericserv() {
 }
 
 #[test]
+fn getaddrinfo_resolves_www_https_service_name_without_ai_numericserv() {
+  let host = CString::new("127.0.0.1").expect("host literal must be NUL-free");
+  let service = CString::new("www-https").expect("service literal must be NUL-free");
+  let mut hints = empty_hints();
+  let mut result = ptr::null_mut();
+
+  hints.ai_flags = AI_NUMERICHOST;
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
+
+  // SAFETY: all pointers are valid for the duration of this call.
+  let status = unsafe {
+    getaddrinfo(
+      host.as_ptr(),
+      service.as_ptr(),
+      &raw const hints,
+      &raw mut result,
+    )
+  };
+
+  assert_eq!(status, 0);
+  assert!(!result.is_null());
+
+  // SAFETY: successful `getaddrinfo` returns a valid linked-list head.
+  unsafe {
+    let entry = &*result;
+    let socket_addr = &*sockaddr_ptr_as_in(entry.ai_addr);
+
+    assert_eq!(u16::from_be(socket_addr.sin_port), 443);
+  }
+
+  // SAFETY: `result` is owned by this test after successful `getaddrinfo`.
+  unsafe { freeaddrinfo(result) };
+}
+
+#[test]
 fn getaddrinfo_rejects_http_service_name_with_surrounding_whitespace_without_ai_numericserv() {
   let host = CString::new("127.0.0.1").expect("host literal must be NUL-free");
   let service = CString::new(" \thttp\n").expect("service literal must be NUL-free");
@@ -1382,6 +1419,55 @@ fn getaddrinfo_rejects_non_utf8_service_with_ai_numericserv_with_eai_noname() {
   let status = unsafe {
     getaddrinfo(
       host.as_ptr(),
+      service.as_ptr(),
+      &raw const hints,
+      &raw mut result,
+    )
+  };
+
+  assert_eq!(status, EAI_NONAME);
+  assert!(result.is_null());
+}
+
+#[test]
+fn getaddrinfo_rejects_non_utf8_service_without_ai_numericserv_with_null_node_and_eai_service() {
+  let service = CString::new(vec![0xff]).expect("service bytes must be NUL-free");
+  let mut hints = empty_hints();
+  let mut result = ptr::null_mut();
+
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
+
+  // SAFETY: all pointers are valid for the duration of this call.
+  let status = unsafe {
+    getaddrinfo(
+      ptr::null(),
+      service.as_ptr(),
+      &raw const hints,
+      &raw mut result,
+    )
+  };
+
+  assert_eq!(status, EAI_SERVICE);
+  assert!(result.is_null());
+}
+
+#[test]
+fn getaddrinfo_rejects_non_utf8_service_with_ai_numericserv_with_null_node_and_eai_noname() {
+  let service = CString::new(vec![0xff]).expect("service bytes must be NUL-free");
+  let mut hints = empty_hints();
+  let mut result = ptr::null_mut();
+
+  hints.ai_flags = AI_NUMERICSERV;
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
+
+  // SAFETY: all pointers are valid for the duration of this call.
+  let status = unsafe {
+    getaddrinfo(
+      ptr::null(),
       service.as_ptr(),
       &raw const hints,
       &raw mut result,

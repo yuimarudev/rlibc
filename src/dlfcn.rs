@@ -279,23 +279,31 @@ fn normalize_dlsym_missing_symbol_detail(symbol_label: &str, detail: &str) -> Op
   if trimmed_detail.is_empty() {
     return None;
   }
+  let mut normalized = trimmed_detail;
 
-  let Some(after_symbol) = trimmed_detail.strip_prefix(symbol_label) else {
-    return Some(trimmed_detail.to_owned());
-  };
-  let after_symbol = after_symbol.trim_start();
+  loop {
+    let Some(after_symbol) = normalized.strip_prefix(symbol_label) else {
+      break;
+    };
+    let after_symbol = after_symbol.trim_start();
 
-  if after_symbol.is_empty() {
-    return None;
+    if after_symbol.is_empty() {
+      return None;
+    }
+
+    let Some(after_separator) = after_symbol.strip_prefix(':') else {
+      break;
+    };
+    let collapsed = after_separator.trim_start_matches(':').trim_start();
+
+    if collapsed.is_empty() {
+      return None;
+    }
+
+    normalized = collapsed;
   }
 
-  let normalized = if after_symbol.starts_with(':') {
-    after_symbol.trim_start_matches(':').trim_start()
-  } else {
-    trimmed_detail
-  };
-
-  (!normalized.is_empty()).then(|| normalized.to_owned())
+  Some(normalized.to_owned())
 }
 
 fn is_dlsym_special_handle(handle: *mut c_void) -> bool {
@@ -886,6 +894,23 @@ mod tests {
   }
 
   #[test]
+  fn set_dlsym_missing_symbol_message_collapses_repeated_symbol_prefix_chain() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup_symbol".as_ptr(),
+      Some("dup_symbol: dup_symbol: host loader unresolved entry"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(
+      message,
+      "rlibc: requested symbol was not found: dup_symbol: host loader unresolved entry",
+    );
+  }
+
+  #[test]
   fn dlclose_decrements_refcount_when_handle_is_still_open() {
     reset_thread_local_error_state();
 
@@ -1407,6 +1432,26 @@ mod tests {
   }
 
   #[test]
+  fn close_open_handle_cleans_trackable_zero_closed_entry_and_preserves_refcount_transition() {
+    let mut registry = DlHandleRegistry::new();
+    let tracked_handle = registry.allocate_test_handle(2);
+
+    registry
+      .handles
+      .insert(TRACKABLE_NULL_HANDLE_ID, DlHandleState::Closed);
+
+    assert_eq!(
+      registry.close_handle(tracked_handle as usize),
+      super::CloseOutcome::Success
+    );
+    assert_eq!(registry.handle_state(TRACKABLE_NULL_HANDLE_ID), None);
+    assert_eq!(
+      registry.handle_state(tracked_handle as usize),
+      Some(DlHandleState::Open { refcount: 1 })
+    );
+  }
+
+  #[test]
   fn close_final_reference_cleans_trackable_zero_entry_and_marks_closed() {
     let mut registry = DlHandleRegistry::new();
     let tracked_handle = registry.allocate_test_handle(1);
@@ -1843,6 +1888,16 @@ mod tests {
     assert_eq!(
       io_error_errno(&error, ENOENT),
       crate::abi::errno::EADDRINUSE
+    );
+  }
+
+  #[test]
+  fn io_error_errno_maps_addr_not_available_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::AddrNotAvailable, "address not available");
+
+    assert_eq!(
+      io_error_errno(&error, ENOENT),
+      crate::abi::errno::EADDRNOTAVAIL
     );
   }
 

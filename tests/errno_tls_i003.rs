@@ -2882,7 +2882,6 @@ fn three_level_nested_threads_keep_errno_zero_start_and_isolation() {
   })
   .join()
   .expect("trunk thread panicked");
-
   let (trunk_slot, trunk_zero, trunk_final, branch_report) = trunk_report;
   let (branch_slot, branch_zero, branch_final, leaf_report) = branch_report;
   let (leaf_slot, leaf_zero, leaf_final) = leaf_report;

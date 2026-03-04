@@ -842,6 +842,26 @@ fn getnameinfo_returns_eai_noname_before_family_validation_when_no_output_is_req
 }
 
 #[test]
+fn getnameinfo_returns_eai_noname_with_name_required_and_numerichost_when_no_output_is_requested() {
+  // SAFETY: both outputs are intentionally disabled; non-zero lengths and a
+  // null address must be ignored. `EAI_NONAME` should still win with
+  // `NI_NAMEREQD | NI_NUMERICHOST`.
+  let status = unsafe {
+    getnameinfo(
+      core::ptr::null(),
+      slen(0),
+      core::ptr::null_mut(),
+      slen(64),
+      core::ptr::null_mut(),
+      slen(32),
+      NI_NAMEREQD | NI_NUMERICHOST,
+    )
+  };
+
+  assert_eq!(status, EAI_NONAME);
+}
+
+#[test]
 fn getnameinfo_returns_eai_noname_for_name_required_without_reverse_lookup() {
   let address = sockaddr_in {
     sin_family: af_inet_family(),

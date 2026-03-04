@@ -748,6 +748,23 @@ fn feupdateenv_with_default_env_resets_round_and_reraises_pending_flags() {
 }
 
 #[test]
+fn feupdateenv_with_default_env_preserves_errno() {
+  reset_fenv_state();
+  write_errno(89);
+
+  assert_eq!(fesetround(FE_UPWARD), 0);
+  assert_eq!(feraiseexcept(FE_DIVBYZERO | FE_INEXACT), 0);
+  // SAFETY: `FE_DFL_ENV` is a valid sentinel for `feupdateenv`.
+  assert_eq!(unsafe { feupdateenv(FE_DFL_ENV) }, 0);
+
+  assert_eq!(fegetround(), FE_TONEAREST);
+  assert_eq!(fetestexcept(FE_ALL_EXCEPT), FE_DIVBYZERO | FE_INEXACT);
+  assert_eq!(read_errno(), 89);
+
+  reset_fenv_state();
+}
+
+#[test]
 fn feupdateenv_success_preserves_errno() {
   reset_fenv_state();
   write_errno(88);

@@ -654,6 +654,36 @@ fn accept_on_non_listening_socket_overwrites_existing_errno_with_einval() {
 }
 
 #[test]
+fn accept_on_non_listening_socket_with_null_addr_and_non_null_addrlen_overwrites_errno_with_einval()
+{
+  let expected_len = to_socklen(core::mem::size_of::<SockaddrUn>());
+  let mut peer_len = expected_len;
+
+  // SAFETY: arguments follow Linux `socket(2)` contract for AF_UNIX stream sockets.
+  let fd = unsafe { socket(AF_UNIX, SOCK_STREAM, 0) };
+
+  assert!(
+    fd >= 0,
+    "socket(non-listening null addr, non-null addrlen) failed with errno={}",
+    errno_value()
+  );
+
+  set_errno(EADDRINUSE);
+  // SAFETY: null addr with writable addrlen pointer is a valid call form.
+  let result = unsafe { accept(fd, core::ptr::null_mut(), core::ptr::addr_of_mut!(peer_len)) };
+  let accept_errno = errno_value();
+
+  close_fd(fd);
+
+  assert_eq!(result, -1);
+  assert_eq!(accept_errno, EINVAL);
+  assert_eq!(
+    peer_len, expected_len,
+    "accept should not modify addrlen when addr is null on non-listening socket"
+  );
+}
+
+#[test]
 fn accept_nonblocking_without_pending_connection_returns_minus_one_and_errno_eagain() {
   let socket_path = unique_socket_path();
   let address = sockaddr_un_for_path(&socket_path);

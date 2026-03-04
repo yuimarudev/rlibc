@@ -1847,6 +1847,10 @@ fn dlerror_dlopen_missing_path_failure_replaces_older_pending_message_and_preser
     "unexpected dlerror message: {message}",
   );
   assert!(
+    message.contains("rlibc_i055_dlopen_replaces_error_preserve_errno.so"),
+    "missing-path dlerror should include path detail text: {message}",
+  );
+  assert!(
     !message.contains("invalid dynamic-loader handle"),
     "newer dlopen failure must replace older pending message: {message}",
   );

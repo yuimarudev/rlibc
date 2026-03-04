@@ -111,6 +111,31 @@ fn pthread_rwlock_init_accepts_non_null_attr_pointer_as_default_attributes() {
 }
 
 #[test]
+fn pthread_rwlock_init_accepts_raw_attr_bytes_without_native_attr_init() {
+  let mut rwlock = new_rwlock();
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+  let attr = pthread_rwlockattr_t {
+    __size: [
+      0xFF_u8, 0x7A_u8, 0x13_u8, 0xC4_u8, 0x02_u8, 0x00_u8, 0x00_u8, 0x00_u8,
+    ],
+  };
+  // SAFETY: `rwlock_ptr` is valid and this implementation accepts non-null
+  // attr bytes as compatibility/default attributes without requiring native
+  // attr object initialization.
+  let init_result = unsafe { pthread_rwlock_init(rwlock_ptr, ptr::from_ref(&attr)) };
+
+  assert_eq!(init_result, 0);
+  // SAFETY: lock was initialized successfully with raw attr bytes.
+  assert_eq!(unsafe { pthread_rwlock_wrlock(rwlock_ptr) }, 0);
+  // SAFETY: current thread holds the write lock.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: lock is initialized and unlocked.
+  let destroy_result = unsafe { pthread_rwlock_destroy(rwlock_ptr) };
+
+  assert_eq!(destroy_result, 0);
+}
+
+#[test]
 fn pthread_rwlock_init_accepts_process_shared_attr_as_default_attributes() {
   let mut rwlock = new_rwlock();
   let rwlock_ptr = ptr::from_mut(&mut rwlock);

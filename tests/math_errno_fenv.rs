@@ -570,6 +570,27 @@ fn exp_negative_infinity_does_not_set_range_error_or_underflow() {
 }
 
 #[test]
+fn exp_negative_infinity_preserves_preexisting_invalid_exception_flag() {
+  clear_all_excepts();
+  write_errno(EDOM);
+
+  let raise_status = feraiseexcept(FE_INVALID);
+
+  assert_eq!(raise_status, 0, "feraiseexcept must succeed");
+  assert_ne!(fetestexcept(FE_INVALID), 0);
+
+  let result = exp(f64::NEG_INFINITY);
+
+  assert_f64_eq(result, 0.0);
+  assert!(result.is_sign_positive());
+  assert_eq!(read_errno(), EDOM);
+  assert_ne!(fetestexcept(FE_INVALID), 0);
+  assert_eq!(fetestexcept(FE_DIVBYZERO), 0);
+  assert_eq!(fetestexcept(FE_OVERFLOW), 0);
+  assert_eq!(fetestexcept(FE_UNDERFLOW), 0);
+}
+
+#[test]
 fn exp_negative_zero_preserves_errno_and_does_not_raise_exceptions() {
   clear_all_excepts();
   write_errno(ERANGE);

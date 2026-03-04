@@ -537,6 +537,17 @@ fn isascii_returns_strict_c_boolean_values_across_domains() {
 }
 
 #[test]
+fn isascii_matches_closed_range_predicate_for_dense_signed_range() {
+  for probe in -4096..=4096 {
+    assert_eq!(
+      isascii(probe),
+      c_int::from((0..=0x7F).contains(&probe)),
+      "isascii range contract mismatch for probe={probe}"
+    );
+  }
+}
+
+#[test]
 fn isascii_and_toascii_do_not_modify_errno() {
   let sentinels = [0, 17, 913, c_int::MAX];
   let boundary_probes = [c_int::MIN, -4096, -2, EOF_C_INT, 256, 4096, c_int::MAX];

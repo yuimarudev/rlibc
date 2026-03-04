@@ -917,6 +917,34 @@ fn sigprocmask_setmask_with_null_oldset_replaces_mask() {
 }
 
 #[test]
+fn sigprocmask_setmask_with_null_oldset_applies_nonempty_replacement() {
+  let _lock = signal_lock();
+  let _restore = SigmaskRestoreGuard::capture();
+  let mut replacement = SigSet::empty();
+  let mut observed = SigSet::empty();
+
+  assert!(replacement.add_signal(SIGUSR1));
+
+  write_errno(ERRNO_SENTINEL);
+  // SAFETY: replace current mask with a set that blocks SIGUSR1.
+  let setmask_status = unsafe { sigprocmask(SIG_SETMASK, &raw const replacement, ptr::null_mut()) };
+
+  assert_eq!(setmask_status, 0);
+  assert_eq!(read_errno(), ERRNO_SENTINEL);
+
+  write_errno(ERRNO_SENTINEL);
+  // SAFETY: query current mask after replacement.
+  let read_status = unsafe { sigprocmask(SIG_BLOCK, ptr::null(), &raw mut observed) };
+
+  assert_eq!(read_status, 0);
+  assert_eq!(read_errno(), ERRNO_SENTINEL);
+  assert!(
+    observed.contains_signal(SIGUSR1),
+    "SIGUSR1 should be blocked after SIG_SETMASK with a non-empty replacement and null oldset",
+  );
+}
+
+#[test]
 fn sigprocmask_unblock_with_oldset_preserves_userspace_only_words() {
   let _lock = signal_lock();
   let _restore = SigmaskRestoreGuard::capture();

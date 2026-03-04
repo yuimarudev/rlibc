@@ -1051,6 +1051,25 @@ fn quality_gate_script_usage_mentions_continue_on_fail_equals_style_rejection_on
 }
 
 #[test]
+fn quality_gate_script_usage_lists_duplicate_option_rejection_before_default_behavior() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let duplicate_rejection_line =
+    "duplicate options are rejected (for example: repeated --profile or --continue-on-fail)";
+  let default_line = "default: stop on first failed step";
+  let duplicate_rejection_index = script.find(duplicate_rejection_line).unwrap_or_else(|| {
+    panic!("usage must contain duplicate-option rejection line: {duplicate_rejection_line}")
+  });
+  let default_index = script
+    .find(default_line)
+    .unwrap_or_else(|| panic!("usage must contain default behavior line: {default_line}"));
+
+  assert!(
+    duplicate_rejection_index < default_index,
+    "usage must list duplicate-option rejection guidance before continue-on-fail default behavior"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_lists_continue_on_fail_rejection_after_option_line() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let option_line = "--continue-on-fail  keep running remaining profile steps and exit non-zero at end if any step failed (flag only; no value)";

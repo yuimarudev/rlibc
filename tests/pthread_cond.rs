@@ -1012,6 +1012,34 @@ fn pthread_cond_timedwait_with_recursive_mutex_nested_lock_depth_restores_depth(
 }
 
 #[test]
+fn pthread_cond_timedwait_with_zero_initialized_cond_and_recursive_mutex_nested_lock_depth_restores_depth()
+ {
+  let mut mutex = init_recursive_mutex();
+  let mut cond = pthread_cond_t::default();
+  let mut now = timespec {
+    tv_sec: 0,
+    tv_nsec: 0,
+  };
+
+  assert_eq!(clock_gettime(CLOCK_REALTIME, &raw mut now), 0);
+
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(
+    pthread_cond_timedwait(&raw mut cond, &raw mut mutex, &raw const now),
+    ETIMEDOUT,
+  );
+  assert_eq!(
+    pthread_mutex_unlock(&raw mut mutex),
+    0,
+    "zero-initialized timedwait must restore recursive ownership level 2 -> 1",
+  );
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_destroy(&raw mut mutex), 0);
+}
+
+#[test]
 fn pthread_cond_validates_null_arguments() {
   let mut mutex = init_mutex();
   let mut cond = init_cond();

@@ -737,6 +737,47 @@ fn prlimit64_high_bit_old_limit_with_new_limit_sets_efault_and_applies_limits() 
 }
 
 #[test]
+fn prlimit64_low_invalid_old_limit_with_new_limit_sets_efault_and_applies_limits() {
+  let _guard = process_wide_rlimit_lock();
+  let mut original = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  let mut observed = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  let invalid_old_limit = core::ptr::with_exposed_provenance_mut::<RLimit>(1);
+  let get_original = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut original) };
+
+  assert_eq!(get_original, 0, "precondition getrlimit must succeed");
+
+  let requested = RLimit {
+    rlim_cur: original.rlim_cur.saturating_sub(1),
+    rlim_max: original.rlim_max,
+  };
+
+  set_errno(0);
+
+  let status = unsafe { prlimit64(0, RLIMIT_NOFILE, &raw const requested, invalid_old_limit) };
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  let get_observed = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut observed) };
+
+  assert_eq!(get_observed, 0, "post-failure getrlimit must succeed");
+  assert_eq!(
+    observed, requested,
+    "prlimit64 may apply new limits before failing with EFAULT for invalid old_limit pointer"
+  );
+
+  let restore_status = unsafe { setrlimit(RLIMIT_NOFILE, &raw const original) };
+
+  assert_eq!(restore_status, 0, "restoring original limit must succeed");
+}
+
+#[test]
 fn prlimit64_high_bit_new_limit_pointer_sets_efault_and_preserves_limits() {
   let _guard = process_wide_rlimit_lock();
   let mut original = RLimit {

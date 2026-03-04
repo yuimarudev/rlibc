@@ -1733,6 +1733,31 @@ fn count_conversion_later_unsupported_specifier_with_tn_keeps_prior_successful_w
 }
 
 #[test]
+fn count_conversion_later_unsupported_specifier_with_zn_keeps_prior_successful_write() {
+  let mut buffer = [b'Q'; 16];
+  let mut first_count_z: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![ptr_slot(
+    core::ptr::addr_of_mut!(first_count_z).cast_const(),
+  )]);
+
+  set_errno(0);
+  // SAFETY: `%zn` pointer is valid; `%q` is intentionally unsupported for error-path coverage.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"ab%znC%qZ\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(&buffer[..4], b"abC\0");
+  assert_eq!(first_count_z, 2);
+}
+
+#[test]
 fn count_conversion_later_dangling_percent_keeps_prior_successful_write() {
   let mut buffer = [b'Q'; 16];
   let mut first_count_n: c_int = -1;

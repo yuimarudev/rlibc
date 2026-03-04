@@ -28,6 +28,8 @@ const CHILD_SCENARIO_RESERVED_SIGNAL_PRECEDENCE_OVER_INVALID_OLDACT: &str =
   "reserved_signal_precedence_over_invalid_oldact";
 const CHILD_SCENARIO_INVALID_SIGNAL_PRECEDENCE_OVER_INVALID_OLDACT: &str =
   "invalid_signal_precedence_over_invalid_oldact";
+const CHILD_SCENARIO_OUT_OF_RANGE_SIGNAL_PRECEDENCE_OVER_INVALID_OLDACT: &str =
+  "out_of_range_signal_precedence_over_invalid_oldact";
 const CHILD_SCENARIO_INVALID_SIGNAL_PRECEDENCE_OVER_INVALID_ACT_AND_OLDACT: &str =
   "invalid_signal_precedence_over_invalid_act_and_oldact";
 const CHILD_SCENARIO_RESERVED_SIGNAL_PRECEDENCE_OVER_INVALID_ACT_AND_OLDACT: &str =
@@ -453,6 +455,43 @@ fn run_invalid_signal_precedence_over_invalid_oldact_child_scenario() -> ! {
   write_errno(0);
   // SAFETY: invalid signal number must be rejected before touching unreadable `oldact`.
   let status = unsafe { sigaction(0, ptr::null(), invalid_old_action) };
+  let errno_value = read_errno();
+  // SAFETY: best-effort cleanup for child scenario resources.
+  let _result = unsafe { munmap(mapping, PAGE_SIZE) };
+
+  if status == -1 && errno_value == EINVAL {
+    // SAFETY: child process reports success to parent test.
+    unsafe { _Exit(CHILD_EXIT_CODE_SUCCESS) };
+  }
+
+  // SAFETY: child process reports assertion failure to parent test.
+  unsafe { _Exit(CHILD_EXIT_CODE_ASSERTION_FAILED) };
+}
+
+fn run_out_of_range_signal_precedence_over_invalid_oldact_child_scenario() -> ! {
+  // SAFETY: anonymous `PROT_NONE` mapping is used to force inaccessible memory.
+  let mapping = unsafe {
+    mmap(
+      ptr::null_mut(),
+      PAGE_SIZE,
+      PROT_NONE,
+      MAP_PRIVATE | MAP_ANONYMOUS,
+      -1,
+      0,
+    )
+  };
+
+  if mapping as isize == MAP_FAILED {
+    // SAFETY: child process exits immediately on setup failure.
+    unsafe { _Exit(CHILD_EXIT_CODE_MMAP_FAILED) };
+  }
+
+  let invalid_old_action = mapping.cast::<SigAction>();
+
+  write_errno(0);
+  // SAFETY: out-of-range signal number must be rejected before touching
+  // unreadable `oldact`.
+  let status = unsafe { sigaction(MAX_KERNEL_SIGNAL + 1, ptr::null(), invalid_old_action) };
   let errno_value = read_errno();
   // SAFETY: best-effort cleanup for child scenario resources.
   let _result = unsafe { munmap(mapping, PAGE_SIZE) };
@@ -1754,6 +1793,20 @@ fn sigaction_out_of_range_signal_takes_precedence_over_unreadable_act_and_oldact
 }
 
 #[test]
+fn sigaction_out_of_range_signal_takes_precedence_over_unreadable_oldact_pointer() {
+  let _lock = signal_lock();
+  let output =
+    run_child_scenario(CHILD_SCENARIO_OUT_OF_RANGE_SIGNAL_PRECEDENCE_OVER_INVALID_OLDACT);
+
+  assert_eq!(
+    output.status.code(),
+    Some(CHILD_EXIT_CODE_SUCCESS),
+    "out-of-range signal must be rejected before touching unreadable oldact pointer: {}",
+    format_child_output(&output),
+  );
+}
+
+#[test]
 fn signal_i045_child_entrypoint() {
   let Ok(scenario) = env::var(CHILD_SCENARIO_ENV) else {
     return;
@@ -1778,6 +1831,9 @@ fn signal_i045_child_entrypoint() {
     }
     CHILD_SCENARIO_INVALID_SIGNAL_PRECEDENCE_OVER_INVALID_OLDACT => {
       run_invalid_signal_precedence_over_invalid_oldact_child_scenario()
+    }
+    CHILD_SCENARIO_OUT_OF_RANGE_SIGNAL_PRECEDENCE_OVER_INVALID_OLDACT => {
+      run_out_of_range_signal_precedence_over_invalid_oldact_child_scenario()
     }
     CHILD_SCENARIO_INVALID_SIGNAL_PRECEDENCE_OVER_INVALID_ACT_AND_OLDACT => {
       run_invalid_signal_precedence_over_invalid_act_and_oldact_child_scenario()
