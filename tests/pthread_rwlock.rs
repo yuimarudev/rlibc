@@ -162,6 +162,19 @@ fn pthread_rwlock_reinit_with_raw_attr_bytes_still_returns_ebusy() {
 }
 
 #[test]
+fn pthread_rwlock_init_rejects_null_pointer_with_raw_attr_bytes() {
+  let attr = pthread_rwlockattr_t {
+    __size: [
+      0x39_u8, 0xA1_u8, 0x5D_u8, 0xC7_u8, 0x02_u8, 0x00_u8, 0x00_u8, 0x00_u8,
+    ],
+  };
+  // SAFETY: null rwlock pointer is intentional for contract validation.
+  let init_result = unsafe { pthread_rwlock_init(ptr::null_mut(), ptr::from_ref(&attr)) };
+
+  assert_eq!(init_result, EINVAL);
+}
+
+#[test]
 fn pthread_rwlock_init_accepts_process_shared_attr_as_default_attributes() {
   let mut rwlock = new_rwlock();
   let rwlock_ptr = ptr::from_mut(&mut rwlock);

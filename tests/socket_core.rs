@@ -389,6 +389,34 @@ fn bind_null_addr_with_nonzero_len_returns_minus_one_and_errno_efault() {
 }
 
 #[test]
+fn bind_null_addr_with_nonzero_len_sets_errno_efault_when_seeded_with_zero() {
+  // SAFETY: arguments follow Linux `socket(2)` contract for AF_UNIX stream sockets.
+  let fd = unsafe { socket(AF_UNIX, SOCK_STREAM, 0) };
+
+  assert!(
+    fd >= 0,
+    "socket(bind null addr seed zero) failed with errno={}",
+    errno_value()
+  );
+
+  set_errno(0);
+  // SAFETY: null address pointer with non-zero length intentionally exercises `bind(2)` fault path.
+  let result = unsafe {
+    bind(
+      fd,
+      core::ptr::null(),
+      to_socklen(core::mem::size_of::<SockaddrUn>()),
+    )
+  };
+  let bind_errno = errno_value();
+
+  close_fd(fd);
+
+  assert_eq!(result, -1);
+  assert_eq!(bind_errno, EFAULT);
+}
+
+#[test]
 fn bind_non_socket_fd_returns_minus_one_and_errno_enotsock() {
   let file = fs::File::open("/dev/null")
     .unwrap_or_else(|error| panic!("failed to open /dev/null for test: {error}"));

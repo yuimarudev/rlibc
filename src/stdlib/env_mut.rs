@@ -885,6 +885,29 @@ mod tests {
   }
 
   #[test]
+  fn putenv_without_equal_missing_name_preserves_errno_and_does_not_create_alias() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let key = CString::new("RLIBC_I017_PUTENV_UNSET_MISSING_SUCCESS_NO_ALIAS")
+      .expect("CString::new failed");
+    let mut entry_unset = b"RLIBC_I017_PUTENV_UNSET_MISSING_SUCCESS_NO_ALIAS\0".to_vec();
+
+    remove_putenv_alias(key.as_bytes());
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
+
+    write_errno(66);
+
+    // SAFETY: `entry_unset` points to a mutable NUL-terminated `NAME` string.
+    let rc = unsafe { putenv(entry_unset.as_mut_ptr().cast()) };
+
+    assert_eq!(rc, 0);
+    assert_eq!(read_errno(), 66);
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
+  }
+
+  #[test]
   fn putenv_same_name_rebinds_alias_to_latest_buffer() {
     let _test_guard = match test_lock().lock() {
       Ok(guard) => guard,

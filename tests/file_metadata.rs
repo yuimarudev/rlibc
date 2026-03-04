@@ -993,8 +993,7 @@ fn fstatat_absolute_path_with_non_directory_fd_and_null_output_empty_path_flag_s
     .join("absolute_null_output_empty_flag_fd_source.txt");
   let target_path_c = path_to_c_string(&target_path);
 
-  fs::write(&target_path, b"payload")
-    .expect("failed to create absolute-path empty-flag target");
+  fs::write(&target_path, b"payload").expect("failed to create absolute-path empty-flag target");
   fs::write(&fd_source_path, b"fd-source")
     .expect("failed to create non-directory fd source for absolute-path empty-flag test");
 

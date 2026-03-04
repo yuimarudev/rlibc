@@ -1564,6 +1564,37 @@ fn gettimeofday_success_after_clock_gettime_large_positive_invalid_clock_id_keep
 }
 
 #[test]
+fn gettimeofday_success_after_clock_gettime_near_max_positive_invalid_clock_id_keeps_errno_einval()
+{
+  let mut ts = timespec {
+    tv_sec: -1,
+    tv_nsec: -1,
+  };
+  let mut tv = timeval {
+    tv_sec: -1,
+    tv_usec: -1,
+  };
+
+  write_errno(0);
+
+  let fail_rc = clock_gettime(c_int::MAX - 1, &raw mut ts);
+
+  assert_eq!(fail_rc, -1);
+  assert_eq!(read_errno(), EINVAL);
+
+  // SAFETY: `tv` is valid writable storage and `tz` is null by contract.
+  let ok_rc = unsafe { gettimeofday(&raw mut tv, ptr::null_mut()) };
+
+  assert_eq!(ok_rc, 0);
+  assert_eq!(read_errno(), EINVAL);
+  assert!(tv.tv_sec >= 0, "tv_sec must be non-negative");
+  assert!(
+    (0..1_000_000).contains(&tv.tv_usec),
+    "tv_usec must be in [0, 1_000_000)",
+  );
+}
+
+#[test]
 fn gettimeofday_success_after_clock_gettime_null_timespec_with_invalid_clock_id_keeps_errno_efault()
 {
   let mut tv = timeval {

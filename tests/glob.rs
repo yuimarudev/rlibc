@@ -640,7 +640,10 @@ fn glob_nocheck_preserves_escaped_trailing_separator_literal() {
 
   assert_eq!(result, 0);
   assert_eq!(state.path_count(), 1);
-  assert_eq!(state.paths(), vec![stringify_path(temp_dir.path()) + "/still-missing-i037\\/"]);
+  assert_eq!(
+    state.paths(),
+    vec![stringify_path(temp_dir.path()) + "/still-missing-i037\\/"]
+  );
 }
 
 #[test]

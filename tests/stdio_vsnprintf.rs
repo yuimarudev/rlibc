@@ -2310,6 +2310,31 @@ fn count_conversion_zn_success_does_not_clobber_errno() {
 }
 
 #[test]
+fn count_conversion_zn_zero_prefix_success_does_not_clobber_errno() {
+  let mut buffer = [b'Q'; 8];
+  let mut count_z = usize::MAX;
+  let mut ap = OwnedVaList::from_u64_slots(vec![ptr_slot(
+    core::ptr::addr_of_mut!(count_z).cast_const(),
+  )]);
+
+  set_errno(91);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"%zn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 0);
+  assert_eq!(buffer[0], 0);
+  assert_eq!(count_z, 0);
+  assert_eq!(read_errno(), 91);
+}
+
+#[test]
 fn count_conversion_jn_success_does_not_clobber_errno() {
   let mut buffer = [0_u8; 8];
   let mut count_j: i64 = -1;
@@ -2335,6 +2360,31 @@ fn count_conversion_jn_success_does_not_clobber_errno() {
 }
 
 #[test]
+fn count_conversion_jn_zero_prefix_success_does_not_clobber_errno() {
+  let mut buffer = [b'Q'; 8];
+  let mut count_j: i64 = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![ptr_slot(
+    core::ptr::addr_of_mut!(count_j).cast_const(),
+  )]);
+
+  set_errno(91);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"%jn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 0);
+  assert_eq!(buffer[0], 0);
+  assert_eq!(count_j, 0);
+  assert_eq!(read_errno(), 91);
+}
+
+#[test]
 fn count_conversion_tn_success_does_not_clobber_errno() {
   let mut buffer = [0_u8; 8];
   let mut count_t: isize = -1;
@@ -2356,6 +2406,31 @@ fn count_conversion_tn_success_does_not_clobber_errno() {
   assert_eq!(result, 1);
   assert_eq!(&buffer[..2], b"X\0");
   assert_eq!(count_t, 1);
+  assert_eq!(read_errno(), 91);
+}
+
+#[test]
+fn count_conversion_tn_zero_prefix_success_does_not_clobber_errno() {
+  let mut buffer = [b'Q'; 8];
+  let mut count_t: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![ptr_slot(
+    core::ptr::addr_of_mut!(count_t).cast_const(),
+  )]);
+
+  set_errno(91);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"%tn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 0);
+  assert_eq!(buffer[0], 0);
+  assert_eq!(count_t, 0);
   assert_eq!(read_errno(), 91);
 }
 
@@ -2406,6 +2481,37 @@ fn count_conversion_lln_zero_prefix_success_does_not_clobber_errno() {
   assert_eq!(result, 0);
   assert_eq!(buffer[0], 0);
   assert_eq!(count_ll, 0);
+  assert_eq!(read_errno(), 91);
+}
+
+#[test]
+fn count_conversion_jn_tn_zn_zero_prefix_success_does_not_clobber_errno() {
+  let mut buffer = [b'Q'; 8];
+  let mut count_j: i64 = -1;
+  let mut count_t: isize = -1;
+  let mut count_z: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(count_j).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(count_t).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(count_z).cast_const()),
+  ]);
+
+  set_errno(91);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"%jn%tn%zn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 0);
+  assert_eq!(buffer[0], 0);
+  assert_eq!(count_j, 0);
+  assert_eq!(count_t, 0);
+  assert_eq!(count_z, 0);
   assert_eq!(read_errno(), 91);
 }
 

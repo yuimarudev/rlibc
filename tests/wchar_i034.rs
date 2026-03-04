@@ -2480,6 +2480,80 @@ fn wcsrtombs_zero_len_does_not_validate_or_advance_src_with_corrupted_state() {
 }
 
 #[test]
+fn wcsrtombs_zero_len_does_not_validate_or_advance_src_with_reserved_state() {
+  let input = [0xD800_i32, 0_i32];
+  let mut src = input.as_ptr();
+  let mut state = mbstate_t::new();
+  let mut dst = [0_u8; 1];
+  let original = src;
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[0]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 1, 0];
+
+  write_state_bytes(&mut state, reserved);
+  // SAFETY: state pointer is valid readable storage.
+  let before = unsafe { mbsinit(&raw const state) };
+
+  assert_eq!(before, 0);
+
+  set_errno(7373);
+  // SAFETY: pointers are valid; `len == 0` should short-circuit before validating state/input.
+  let converted = unsafe {
+    wcsrtombs(
+      dst.as_mut_ptr().cast::<c_char>(),
+      &raw mut src,
+      sz(0),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(converted, sz(0));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 7373);
+
+  // SAFETY: state pointer is valid readable storage.
+  let after = unsafe { mbsinit(&raw const state) };
+
+  assert_eq!(after, 0);
+}
+
+#[test]
+fn wcsrtombs_zero_len_does_not_validate_or_advance_src_with_second_reserved_byte_state() {
+  let input = [0xD800_i32, 0_i32];
+  let mut src = input.as_ptr();
+  let mut state = mbstate_t::new();
+  let mut dst = [0_u8; 1];
+  let original = src;
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[1]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 0, 1];
+
+  write_state_bytes(&mut state, reserved);
+  // SAFETY: state pointer is valid readable storage.
+  let before = unsafe { mbsinit(&raw const state) };
+
+  assert_eq!(before, 0);
+
+  set_errno(7474);
+  // SAFETY: pointers are valid; `len == 0` should short-circuit before validating state/input.
+  let converted = unsafe {
+    wcsrtombs(
+      dst.as_mut_ptr().cast::<c_char>(),
+      &raw mut src,
+      sz(0),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(converted, sz(0));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 7474);
+
+  // SAFETY: state pointer is valid readable storage.
+  let after = unsafe { mbsinit(&raw const state) };
+
+  assert_eq!(after, 0);
+}
+
+#[test]
 fn wcsrtombs_null_dst_counts_without_advancing_src() {
   let input = [i32::from(b'A'), 0x1F363_i32, 0_i32];
   let mut src = input.as_ptr();

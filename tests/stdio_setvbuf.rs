@@ -2053,7 +2053,7 @@ fn setvbuf_line_buffered_mode_defers_non_newline_percent_f_until_fflush() {
 
 #[test]
 fn setvbuf_line_buffered_mode_defers_negative_dynamic_width_percent_f_without_newline_until_fflush()
- {
+{
   let _guard = test_lock();
   let format = b"%*f\0";
   // SAFETY: host libc provides a valid stream or null on allocation failure.

@@ -1939,6 +1939,34 @@ fn memcpy_zero_length_allows_live_and_one_past_end_pointers() {
 }
 
 #[test]
+fn memcpy_zero_length_allows_live_and_one_past_end_with_distinct_alignments() {
+  let mut destination_words = [17_u16, 18, 19, 20];
+  let source_words = [21_u32, 22, 23, 24];
+  let live_destination = destination_words.as_mut_ptr().wrapping_add(1).cast::<u8>();
+  let one_past_end_destination = destination_words
+    .as_mut_ptr()
+    .wrapping_add(destination_words.len())
+    .cast::<u8>();
+  let live_source = source_words.as_ptr().wrapping_add(1).cast::<u8>();
+  let one_past_end_source = source_words
+    .as_ptr()
+    .wrapping_add(source_words.len())
+    .cast::<u8>();
+  let destination_before = destination_words;
+  // SAFETY: `n == 0`, so pointers are never dereferenced.
+  let returned_live_destination =
+    unsafe { memcpy(live_destination.cast(), one_past_end_source.cast(), sz(0)) }.cast::<u8>();
+  // SAFETY: `n == 0`, so pointers are never dereferenced.
+  let returned_one_past_end_destination =
+    unsafe { memcpy(one_past_end_destination.cast(), live_source.cast(), sz(0)) }.cast::<u8>();
+
+  assert_eq!(returned_live_destination, live_destination);
+  assert_eq!(returned_one_past_end_destination, one_past_end_destination);
+  assert_eq!(destination_words, destination_before);
+  assert_eq!(source_words, [21_u32, 22, 23, 24]);
+}
+
+#[test]
 fn memcpy_zero_length_allows_mixed_live_and_dangling_pointers() {
   let mut destination = [31_u8, 32, 33];
   let live_destination = destination.as_mut_ptr().wrapping_add(1);

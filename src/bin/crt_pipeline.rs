@@ -279,8 +279,8 @@ fn print_usage() {
 #[cfg(test)]
 mod tests {
   use super::{
-    crt_source_root, ensure_source_file, parse_args, resolve_default_compiler, Action, Config,
-    DEFAULT_COMPILER, DEFAULT_OUTPUT_DIR,
+    Action, Config, DEFAULT_COMPILER, DEFAULT_OUTPUT_DIR, crt_source_root, ensure_source_file,
+    parse_args, resolve_default_compiler,
   };
   use std::path::{Path, PathBuf};
   use std::sync::atomic::{AtomicU64, Ordering};

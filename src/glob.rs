@@ -349,6 +349,52 @@ fn root_only_result_path(
   path
 }
 
+fn separator_is_escaped(pattern: &[u8], separator_index: usize, flags: c_int) -> bool {
+  if flags & GLOB_NOESCAPE != 0
+    || separator_index == 0
+    || pattern[separator_index] != PATH_SEPARATOR
+  {
+    return false;
+  }
+
+  let mut backslash_count = 0_usize;
+  let mut index = separator_index;
+
+  while index > 0 && pattern[index - 1] == b'\\' {
+    backslash_count += 1;
+    index -= 1;
+  }
+
+  backslash_count % 2 == 1
+}
+
+fn nocheck_fallback_pattern(pattern: &[u8], flags: c_int) -> Vec<u8> {
+  let mut end = pattern.len();
+
+  while end > 0
+    && pattern[end - 1] == PATH_SEPARATOR
+    && !separator_is_escaped(pattern, end - 1, flags)
+  {
+    end -= 1;
+  }
+
+  let trimmed = if end == 0 {
+    pattern
+  } else {
+    &pattern[..end]
+  };
+  let mut normalized = trimmed.to_vec();
+
+  if normalized.starts_with(b"//")
+    && normalized.len() > 2
+    && !normalized[2..].contains(&PATH_SEPARATOR)
+  {
+    normalized.remove(0);
+  }
+
+  normalized
+}
+
 fn bracket_match(
   pattern: &[u8],
   bracket_index: usize,
@@ -821,7 +867,7 @@ pub unsafe extern "C" fn glob(
       return GLOB_NOMATCH;
     }
 
-    matched_paths.push(pattern_bytes.to_vec());
+    matched_paths.push(nocheck_fallback_pattern(pattern_bytes, flags));
   }
 
   if flags & GLOB_NOSORT == 0 {

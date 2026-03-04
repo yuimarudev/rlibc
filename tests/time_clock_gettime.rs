@@ -375,6 +375,34 @@ fn dynamic_clockid_alias_for_min_fd_after_null_timespec_matches_zero_fd_errno_co
 }
 
 #[test]
+fn min_fd_and_zero_fd_alias_after_null_then_invalid_clock_overwrite_errno_with_einval() {
+  let dynamic_clock_ids: [clockid_t; 2] = [fd_to_clockid(c_int::MIN), fd_to_clockid(0)];
+
+  assert_eq!(dynamic_clock_ids[0], dynamic_clock_ids[1]);
+
+  for (index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    let mut invalid_ts = timespec {
+      tv_sec: 910 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 920 + i64::try_from(index).unwrap_or(0),
+    };
+    let before = invalid_ts;
+
+    write_errno(EINVAL);
+
+    let null_result = clock_gettime(*dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
+
+    let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
+
+    assert_eq!(invalid_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(invalid_ts, before);
+  }
+}
+
+#[test]
 fn dynamic_clockid_alias_for_max_fd_follows_thread_cputime_errno_contract() {
   let mut ts = timespec {
     tv_sec: 0,

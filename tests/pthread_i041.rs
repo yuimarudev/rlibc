@@ -1342,10 +1342,12 @@ fn pthread_unknown_probe_during_local_detached_lifecycle_stays_eventually_releas
   let Some(mut unknown_candidate) = detached_thread.checked_add(1) else {
     panic!("pthread_t id increment overflowed unexpectedly");
   };
+
   if unknown_candidate == baseline {
     let Some(next_candidate) = unknown_candidate.checked_add(1) else {
       panic!("pthread_t second id increment overflowed unexpectedly");
     };
+
     unknown_candidate = next_candidate;
   }
 

@@ -2125,6 +2125,71 @@ fn pthread_mutex_destroy_stays_ebusy_after_single_signal_while_second_waiter_is_
 }
 
 #[test]
+fn pthread_mutex_destroy_stays_ebusy_after_single_signal_while_second_zero_initialized_cond_waiter_is_blocked()
+ {
+  let mut mutex = init_mutex();
+  let mut cond = pthread_cond_t::default();
+  let mutex_addr = (&raw mut mutex) as usize;
+  let cond_addr = (&raw mut cond) as usize;
+  let (started_tx, started_rx) = mpsc::channel();
+  let (woke_tx, woke_rx) = mpsc::channel();
+
+  thread::scope(|scope| {
+    for _ in 0..2 {
+      let started_tx = started_tx.clone();
+      let woke_tx = woke_tx.clone();
+
+      scope.spawn(move || {
+        let mutex_ptr = mutex_addr as *mut pthread_mutex_t;
+        let cond_ptr = cond_addr as *mut pthread_cond_t;
+
+        assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+        started_tx
+          .send(())
+          .expect("failed to send waiter start signal");
+        assert_eq!(pthread_cond_wait(cond_ptr, mutex_ptr), 0);
+        assert_eq!(pthread_mutex_unlock(mutex_ptr), 0);
+        woke_tx.send(()).expect("failed to send wake signal");
+      });
+    }
+
+    started_rx.recv().expect("first waiter did not start");
+    started_rx.recv().expect("second waiter did not start");
+
+    assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+    assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+    assert_eq!(
+      pthread_mutex_destroy(&raw mut mutex),
+      EBUSY,
+      "destroy must fail while two zero-initialized cond-wait waiters reference mutex state",
+    );
+
+    assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+    assert_eq!(pthread_cond_signal(&raw mut cond), 0);
+    assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+
+    woke_rx
+      .recv()
+      .expect("first waiter did not wake after signal");
+    assert_eq!(
+      pthread_mutex_destroy(&raw mut mutex),
+      EBUSY,
+      "destroy must remain busy while another zero-initialized cond-wait waiter stays blocked",
+    );
+
+    assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+    assert_eq!(pthread_cond_broadcast(&raw mut cond), 0);
+    assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+    woke_rx
+      .recv()
+      .expect("second waiter did not wake after broadcast");
+  });
+
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_destroy(&raw mut mutex), 0);
+}
+
+#[test]
 fn pthread_mutex_destroy_succeeds_after_recursive_cond_wait_signal_releases_reference() {
   let mut mutex = init_recursive_mutex();
   let mut cond = init_cond();
