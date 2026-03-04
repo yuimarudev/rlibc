@@ -551,6 +551,18 @@ fn strnlen_matches_strlen_for_usize_max_on_utf8_offset_pointer() {
 }
 
 #[test]
+fn strnlen_returns_n_when_limit_matches_first_nul_for_utf8_offset_pointer() {
+  let input = b"\xE5\xAF\xBF\xE5\x8F\xB8\0";
+  let base_ptr = as_c_char_ptr(input);
+  // SAFETY: offset by 3 bytes stays within `input`.
+  let offset_ptr = unsafe { base_ptr.add(3) };
+  // SAFETY: pointer is readable for at least 3 bytes.
+  let bounded_len = unsafe { strnlen(offset_ptr, 3) };
+
+  assert_eq!(bounded_len, 3);
+}
+
+#[test]
 fn strlen_and_strnlen_count_bytes_from_mid_utf8_scalar_offset_pointer() {
   let input = b"\xE5\xAF\xBF\0";
   let base_ptr = as_c_char_ptr(input);

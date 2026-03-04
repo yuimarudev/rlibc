@@ -358,6 +358,22 @@ mod tests {
   }
 
   #[test]
+  fn parse_args_long_help_before_bare_positional_returns_help() {
+    let action = parse_args(&["--help".to_string(), "positional".to_string()])
+      .expect("long help before bare positional must parse as help");
+
+    assert!(matches!(action, Action::Help));
+  }
+
+  #[test]
+  fn parse_args_short_help_before_bare_positional_returns_help() {
+    let action = parse_args(&["-h".to_string(), "positional".to_string()])
+      .expect("short help before bare positional must parse as help");
+
+    assert!(matches!(action, Action::Help));
+  }
+
+  #[test]
   fn parse_args_long_help_before_double_dash_with_trailing_positional_returns_help() {
     let action = parse_args(&[
       "--help".to_string(),

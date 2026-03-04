@@ -800,6 +800,38 @@ fn crt_pipeline_short_help_before_blank_out_dir_equals_value_still_succeeds() {
 }
 
 #[test]
+fn crt_pipeline_long_help_before_bare_positional_still_succeeds() {
+  let sandbox = TempDirectory::create();
+  let args = vec!["--help".to_string(), "positional".to_string()];
+  let output = run_pipeline_in_dir(&args, sandbox.path());
+  let default_output_dir = sandbox.path().join("target/release/crt");
+
+  assert_pipeline_success(&output);
+  assert_pipeline_stdout_contains(&output, "Usage: cargo run --release --bin crt_pipeline --");
+  assert!(
+    fs::metadata(&default_output_dir).is_err(),
+    "help mode should not create default output directory when trailing positional follows: {}",
+    default_output_dir.display()
+  );
+}
+
+#[test]
+fn crt_pipeline_short_help_before_bare_positional_still_succeeds() {
+  let sandbox = TempDirectory::create();
+  let args = vec!["-h".to_string(), "positional".to_string()];
+  let output = run_pipeline_in_dir(&args, sandbox.path());
+  let default_output_dir = sandbox.path().join("target/release/crt");
+
+  assert_pipeline_success(&output);
+  assert_pipeline_stdout_contains(&output, "Usage: cargo run --release --bin crt_pipeline --");
+  assert!(
+    fs::metadata(&default_output_dir).is_err(),
+    "help mode should not create default output directory when trailing positional follows: {}",
+    default_output_dir.display()
+  );
+}
+
+#[test]
 fn crt_pipeline_long_help_before_double_dash_with_trailing_positional_still_succeeds() {
   let sandbox = TempDirectory::create();
   let args = vec![

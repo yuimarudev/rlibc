@@ -1080,6 +1080,39 @@ fn pthread_rwlock_failed_trywrlock_while_reader_held_allows_writer_after_release
 }
 
 #[test]
+fn pthread_rwlock_failed_trywrlock_while_reader_held_still_allows_reader_reacquire() {
+  let mut rwlock = new_rwlock();
+
+  init_rwlock(&mut rwlock);
+
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+
+  // SAFETY: `rwlock_ptr` points to initialized lock storage.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+
+  for _ in 0..3 {
+    // SAFETY: writer try-reentry while current thread holds read ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+  }
+
+  // SAFETY: failed writer try-reentries must not block additional same-thread reader acquire.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+  // SAFETY: same-thread recursive reader try-acquire remains allowed.
+  assert_eq!(unsafe { pthread_rwlock_tryrdlock(rwlock_ptr) }, 0);
+
+  // SAFETY: release one reader depth.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: release second reader depth.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: release final reader depth.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: no ownership remains; extra unlock must fail.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, EINVAL);
+  // SAFETY: lock is initialized and unlocked.
+  assert_eq!(unsafe { pthread_rwlock_destroy(rwlock_ptr) }, 0);
+}
+
+#[test]
 fn pthread_rwlock_tryrdlock_returns_ebusy_for_same_thread_writer_reentry() {
   let mut rwlock = new_rwlock();
 

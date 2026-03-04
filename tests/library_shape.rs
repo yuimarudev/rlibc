@@ -831,6 +831,10 @@ fn project_name_c_string_accessors_stay_consistent() {
     name_bytes.len(),
     "project_name_cstr_len() should match project_name() byte length"
   );
+  assert!(
+    rlibc::project_name_cstr_len() > 0,
+    "project_name_cstr_len() should stay non-zero for stable library identity"
+  );
   assert_eq!(
     c_name.to_bytes().len(),
     rlibc::project_name_cstr_len(),

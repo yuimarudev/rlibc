@@ -1940,6 +1940,23 @@ memcpy
   }
 
   #[test]
+  fn parse_snapshot_accepts_snapshot_with_all_crlf_line_endings() {
+    let snapshot = concat!(
+      "ABI_SNAPSHOT_V1\r\n",
+      "ELF_CLASS=ELF64\r\n",
+      "ELF_MACHINE=Advanced Micro Devices X86-64\r\n",
+      "SYMBOLS:\r\n",
+      "memcpy\r\n",
+    );
+    let parsed =
+      parse_snapshot(snapshot).expect("snapshot parser should accept full CRLF line endings");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
+    assert!(parsed.symbols.contains("memcpy"));
+  }
+
+  #[test]
   fn parse_snapshot_rejects_empty_symbols_block() {
     let snapshot = "\
 ABI_SNAPSHOT_V1

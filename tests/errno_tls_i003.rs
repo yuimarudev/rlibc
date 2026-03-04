@@ -2842,3 +2842,94 @@ fn nested_thread_pointer_remains_stable_across_repeated_writes() {
     "nested writes must not clobber main-thread errno",
   );
 }
+
+#[test]
+fn three_level_nested_threads_keep_errno_zero_start_and_isolation() {
+  write_errno(77);
+
+  let main_slot = __errno_location() as usize;
+  let trunk_report = thread::spawn(|| {
+    let trunk_slot = __errno_location() as usize;
+    let trunk_zero = read_errno();
+
+    write_errno(1001);
+
+    let branch_report = thread::spawn(|| {
+      let branch_slot = __errno_location() as usize;
+      let branch_zero = read_errno();
+
+      write_errno(2002);
+
+      let leaf_report = thread::spawn(|| {
+        let leaf_slot = __errno_location() as usize;
+        let leaf_zero = read_errno();
+
+        write_errno(-3003);
+
+        (leaf_slot, leaf_zero, read_errno())
+      })
+      .join()
+      .expect("leaf thread panicked");
+      let branch_final = read_errno();
+
+      (branch_slot, branch_zero, branch_final, leaf_report)
+    })
+    .join()
+    .expect("branch thread panicked");
+    let trunk_final = read_errno();
+
+    (trunk_slot, trunk_zero, trunk_final, branch_report)
+  })
+  .join()
+  .expect("trunk thread panicked");
+
+  let (trunk_slot, trunk_zero, trunk_final, branch_report) = trunk_report;
+  let (branch_slot, branch_zero, branch_final, leaf_report) = branch_report;
+  let (leaf_slot, leaf_zero, leaf_final) = leaf_report;
+
+  assert_eq!(trunk_zero, 0, "trunk thread must start with zero errno");
+  assert_eq!(branch_zero, 0, "branch thread must start with zero errno");
+  assert_eq!(leaf_zero, 0, "leaf thread must start with zero errno");
+  assert_eq!(
+    trunk_final, 1001,
+    "branch/leaf writes must not clobber trunk errno",
+  );
+  assert_eq!(
+    branch_final, 2002,
+    "leaf writes must not clobber branch errno",
+  );
+  assert_eq!(
+    leaf_final, -3003,
+    "leaf thread must preserve its own errno write"
+  );
+  assert_ne!(
+    trunk_slot, main_slot,
+    "trunk thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    branch_slot, main_slot,
+    "branch thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    leaf_slot, main_slot,
+    "leaf thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    branch_slot, trunk_slot,
+    "branch thread must not share errno storage with trunk thread",
+  );
+  assert_ne!(
+    leaf_slot, branch_slot,
+    "leaf thread must not share errno storage with branch thread",
+  );
+  assert_eq!(
+    __errno_location() as usize,
+    main_slot,
+    "main-thread errno pointer must remain stable across three-level nesting",
+  );
+  assert_eq!(
+    read_errno(),
+    77,
+    "nested writes must not clobber main-thread errno"
+  );
+}

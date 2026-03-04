@@ -109,6 +109,20 @@ fn size_types_match_pointer_word_width() {
 }
 
 #[test]
+fn size_types_round_trip_with_machine_words() {
+  let machine_unsigned: usize = 0x1234_5678_9abc_def0;
+  let abi_unsigned: size_t = machine_unsigned as size_t;
+  let round_trip_unsigned: usize = abi_unsigned as usize;
+
+  let machine_signed: isize = -0x1234_5678;
+  let abi_signed: ssize_t = machine_signed as ssize_t;
+  let round_trip_signed: isize = abi_signed as isize;
+
+  assert_eq!(round_trip_unsigned, machine_unsigned);
+  assert_eq!(round_trip_signed, machine_signed);
+}
+
+#[test]
 fn c_type_aliases_match_x86_64_linux_signedness_contract() {
   assert!(c_char::MIN < 0 as c_char);
   assert!(c_schar::MIN < 0 as c_schar);

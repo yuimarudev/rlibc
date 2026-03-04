@@ -1023,6 +1023,21 @@ fn quality_gate_script_usage_mentions_duplicate_option_rejection() {
 }
 
 #[test]
+fn quality_gate_script_usage_mentions_duplicate_option_rejection_once() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let occurrence_count = script
+    .matches(
+      "duplicate options are rejected (for example: repeated --profile or --continue-on-fail)",
+    )
+    .count();
+
+  assert_eq!(
+    occurrence_count, 1,
+    "usage/options duplicate-option rejection text must appear exactly once to avoid duplicate guidance drift"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_mentions_continue_on_fail_equals_style_rejection_once() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let occurrence_count = script
@@ -1361,6 +1376,10 @@ fn command_uses_supported_runtest_prefix(command: &str) -> bool {
     }
 
     if workload.starts_with('/') {
+      return false;
+    }
+
+    if workload.ends_with('/') {
       return false;
     }
 

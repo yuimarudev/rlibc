@@ -720,6 +720,74 @@ fn wcrtomb_null_destination_ignores_invalid_wchar_and_resets_corrupted_state() {
 }
 
 #[test]
+fn wcrtomb_null_destination_resets_reserved_state() {
+  let mut state = mbstate_t::new();
+  let input = b"A\0";
+  let mut src = input.as_ptr().cast::<c_char>();
+  let mut dst = [0_i32; 2];
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[0]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 1, 0];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(6161);
+  // SAFETY: null destination requests reset and ignores `wc`.
+  let reset_result = unsafe { wcrtomb(ptr::null_mut(), wchar_t::from(b'Q'), &raw mut state) };
+
+  assert_eq!(reset_result, sz(1));
+  assert_eq!(errno_value(), 6161);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let converted = unsafe {
+    mbsrtowcs(
+      dst.as_mut_ptr(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(converted, sz(1));
+  assert_eq!(dst[0], i32::from(b'A'));
+  assert!(src.is_null());
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn wcrtomb_null_destination_resets_second_reserved_byte_state() {
+  let mut state = mbstate_t::new();
+  let input = b"A\0";
+  let mut src = input.as_ptr().cast::<c_char>();
+  let mut dst = [0_i32; 2];
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=0, reserved[1]=1.
+  let reserved = [0_u8, 0, 0, 0, 0, 0, 0, 1];
+
+  write_state_bytes(&mut state, reserved);
+  set_errno(6262);
+  // SAFETY: null destination requests reset and ignores `wc`.
+  let reset_result = unsafe { wcrtomb(ptr::null_mut(), wchar_t::from(b'Q'), &raw mut state) };
+
+  assert_eq!(reset_result, sz(1));
+  assert_eq!(errno_value(), 6262);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let converted = unsafe {
+    mbsrtowcs(
+      dst.as_mut_ptr(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(converted, sz(1));
+  assert_eq!(dst[0], i32::from(b'A'));
+  assert!(src.is_null());
+  assert_eq!(errno_value(), 0);
+}
+
+#[test]
 fn wcrtomb_non_null_destination_rejects_corrupted_state_and_resets_for_next_call() {
   let mut state = mbstate_t::new();
   let mut out = [0x55_u8; 4];

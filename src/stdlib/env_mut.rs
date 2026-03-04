@@ -362,6 +362,9 @@ pub(super) fn lookup_putenv_alias_value(name_bytes: &[u8]) -> Option<*mut c_char
     }
   }
 
+  remove_indices.sort_unstable();
+  remove_indices.dedup();
+
   for alias_index in remove_indices.into_iter().rev() {
     aliases.remove(alias_index);
   }

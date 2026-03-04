@@ -1386,6 +1386,21 @@ fn sysconf_nprocessors_onln_matches_sched_getaffinity_view() {
 }
 
 #[test]
+fn sysconf_nprocessors_onln_repeated_success_keeps_errno_sentinel() {
+  set_errno(ERRNO_SENTINEL);
+
+  let first_online = query(_SC_NPROCESSORS_ONLN);
+  let first_errno = read_errno();
+  let second_online = query(_SC_NPROCESSORS_ONLN);
+  let second_errno = read_errno();
+
+  assert!(first_online > 0, "_SC_NPROCESSORS_ONLN must be positive");
+  assert!(second_online > 0, "_SC_NPROCESSORS_ONLN must be positive");
+  assert_eq!(first_errno, ERRNO_SENTINEL);
+  assert_eq!(second_errno, ERRNO_SENTINEL);
+}
+
+#[test]
 fn sysconf_nprocessors_onln_preserves_efault_from_gethostname_null_failure() {
   set_errno(0);
 

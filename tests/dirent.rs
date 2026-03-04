@@ -315,6 +315,26 @@ fn opendir_regular_file_with_dot_suffix_returns_null_and_errno_enotdir() {
 }
 
 #[test]
+fn opendir_regular_file_with_dot_slash_suffix_returns_null_and_errno_enotdir() {
+  let temp_dir = TempDir::new("i036-notdir-dot-slash");
+  let regular_file = temp_dir.path().join("regular.txt");
+  let mut regular_file_with_dot_slash = regular_file.as_os_str().as_bytes().to_vec();
+
+  fs::write(&regular_file, b"content").expect("failed to create regular file for opendir test");
+  regular_file_with_dot_slash.extend_from_slice(b"/./");
+
+  let regular_file_c = CString::new(regular_file_with_dot_slash)
+    .expect("regular file path with dot-slash suffix must be valid");
+
+  write_errno(0);
+  // SAFETY: `regular_file_c` is a valid NUL-terminated path string.
+  let dir = unsafe { opendir(regular_file_c.as_ptr().cast::<c_char>()) };
+
+  assert!(dir.is_null());
+  assert_eq!(read_errno(), ENOTDIR);
+}
+
+#[test]
 fn opendir_success_returns_non_null_and_keeps_errno() {
   let temp_dir = TempDir::new("i036-open-ok");
   let path_c = path_to_c_string(temp_dir.path());

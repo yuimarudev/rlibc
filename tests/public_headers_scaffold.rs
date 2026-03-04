@@ -1185,6 +1185,10 @@ fn exported_symbol_detection_rejects_statement_context_function_call_text() {
     "getpid"
   ));
   assert!(!line_declares_exported_symbol(
+    "ready + (getpid());",
+    "getpid"
+  ));
+  assert!(!line_declares_exported_symbol(
     "ready << getpid();",
     "getpid"
   ));

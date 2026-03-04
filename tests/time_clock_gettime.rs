@@ -1955,6 +1955,38 @@ fn max_positive_invalid_clock_id_after_dynamic_alias_null_timespec_overwrites_er
 }
 
 #[test]
+fn extreme_negative_invalid_clock_id_after_dynamic_alias_null_timespec_overwrites_errno_with_einval()
+ {
+  let dynamic_clock_ids: [clockid_t; 3] = [
+    fd_to_clockid(-1),
+    fd_to_clockid(-2),
+    fd_to_clockid(c_int::MAX),
+  ];
+
+  for (index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    let mut invalid_ts = timespec {
+      tv_sec: 50_000 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 60_000 + i64::try_from(index).unwrap_or(0),
+    };
+    let before = invalid_ts;
+
+    write_errno(EINVAL);
+
+    let null_result = clock_gettime(*dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
+
+    let invalid_clock_id: clockid_t = c_int::MIN;
+    let invalid_result = clock_gettime(invalid_clock_id, &raw mut invalid_ts);
+
+    assert_eq!(invalid_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(invalid_ts, before);
+  }
+}
+
+#[test]
 fn clock_gettime_null_timespec_prioritizes_efault_over_large_positive_invalid_clock_id() {
   write_errno(77);
 

@@ -556,6 +556,13 @@ const fn is_integer_conversion(conversion: u8) -> bool {
   matches!(conversion, b'd' | b'i' | b'u' | b'x' | b'X' | b'o')
 }
 
+const fn is_float_conversion(conversion: u8) -> bool {
+  matches!(
+    conversion,
+    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A'
+  )
+}
+
 const fn is_pointer_conversion(conversion: u8) -> bool {
   conversion == b'p'
 }
@@ -631,10 +638,16 @@ fn parse_format_directive(bytes: &[u8], mut index: usize) -> Option<FormatDirect
 
   let conversion = *bytes.get(index)?;
   let is_string_or_char = conversion == b's' || conversion == b'c';
+  let is_float = is_float_conversion(conversion);
   let is_pointer = is_pointer_conversion(conversion);
   let is_count = is_count_conversion(conversion);
 
-  if !is_string_or_char && !is_integer_conversion(conversion) && !is_pointer && !is_count {
+  if !is_string_or_char
+    && !is_integer_conversion(conversion)
+    && !is_float
+    && !is_pointer
+    && !is_count
+  {
     return None;
   }
 
@@ -664,6 +677,10 @@ fn parse_format_directive(bytes: &[u8], mut index: usize) -> Option<FormatDirect
       | FormatDirective::LEFT_ALIGN;
 
     if (flags & disallowed_flags) != 0 || width.is_some() || precision.is_some() {
+      return None;
+    }
+  } else if is_float {
+    if length != LengthModifier::Default && length != LengthModifier::L {
       return None;
     }
   } else if ((flags & (FormatDirective::FORCE_SIGN | FormatDirective::LEADING_SPACE_FOR_POSITIVE))
@@ -1171,6 +1188,7 @@ unsafe fn formatted_output_contains_newline(format: *const c_char, ap: *mut c_vo
           return remaining_format_contains_newline(format_bytes, index);
         }
       }
+      b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {}
       _ => return remaining_format_contains_newline(format_bytes, index),
     }
 

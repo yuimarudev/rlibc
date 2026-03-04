@@ -56,7 +56,6 @@ Options:
                      equals-style values are rejected (for example: --continue-on-fail=1)
                      duplicate options are rejected (for example: repeated --profile or --continue-on-fail)
                      default: stop on first failed step
-                     duplicate options are rejected (for example: repeated --profile or --continue-on-fail)
   -h, --help         show this help and exit
   --                end option parsing (positional args are rejected)
 USAGE

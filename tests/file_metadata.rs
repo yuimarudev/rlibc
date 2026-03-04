@@ -1250,6 +1250,55 @@ fn fstatat_absolute_missing_path_ignores_non_directory_dirfd() {
 }
 
 #[test]
+fn fstatat_absolute_missing_path_with_empty_path_flag_ignores_non_directory_dirfd() {
+  let temp_dir = TempDir::new();
+  let non_directory_path = temp_dir
+    .path()
+    .join("not_a_directory_fd_for_empty_flag.txt");
+  let missing_path = temp_dir
+    .path()
+    .join("missing_with_file_dirfd_empty_flag.txt");
+  let missing_path_c = path_to_c_string(&missing_path);
+  let mut stat_buf = Stat::default();
+
+  fs::write(&non_directory_path, b"payload")
+    .expect("failed to create non-directory dirfd file for empty-path-flag test");
+
+  let non_directory = File::open(&non_directory_path)
+    .expect("failed to open non-directory dirfd file for empty-path-flag test");
+
+  write_errno(EINVAL);
+
+  // SAFETY: absolute path pointer/output pointer are valid; Linux ignores `dirfd` for absolute paths.
+  let empty_path_flag_rc = unsafe {
+    fstatat(
+      non_directory.as_raw_fd(),
+      missing_path_c.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(empty_path_flag_rc, -1);
+  assert_eq!(read_errno(), ENOENT);
+
+  write_errno(EBADF);
+
+  // SAFETY: absolute path pointer/output pointer are valid; Linux ignores `dirfd` for absolute paths.
+  let combined_flags_rc = unsafe {
+    fstatat(
+      non_directory.as_raw_fd(),
+      missing_path_c.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(combined_flags_rc, -1);
+  assert_eq!(read_errno(), ENOENT);
+}
+
+#[test]
 fn fstatat_absolute_symlink_nofollow_ignores_dirfd() {
   let temp_dir = TempDir::new();
   let target_path = temp_dir.path().join("absolute_nofollow_target.txt");
