@@ -500,6 +500,42 @@ fn adapter_accepts_multiple_split_w_workload_pairs_for_bin_runtest_prefix() {
 }
 
 #[test]
+fn adapter_accepts_nested_workload_path_for_supported_prefixes() {
+  let commands = [
+    "runtest -w functional/stdio/vfprintf",
+    "./runtest -w functional/stdio/vfprintf",
+    "bin/runtest -w functional/stdio/vfprintf",
+    "./bin/runtest -w functional/stdio/vfprintf",
+  ];
+
+  for (index, command) in commands.iter().enumerate() {
+    let temp_dir = TempDirGuard::new(&format!("i060-runtest-nested-workload-path-{index}"));
+    let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+
+    write_text(&manifest_path, &format!("case-a|{command}\n"));
+
+    let arguments = vec![
+      "--dry-run".to_string(),
+      "--profile".to_string(),
+      manifest_path.to_string_lossy().into_owned(),
+    ];
+    let output = run_adapter_with_env(
+      &arguments,
+      &[("RLIBC_LIBC_TEST_RUNTEST", "/opt/libc-test/bin/runtest")],
+    );
+    let stdout = stdout_text(&output);
+
+    assert!(
+      output.status.success(),
+      "nested workload path must remain valid for supported runtest prefixes: {command}"
+    );
+    assert!(
+      stdout.contains("dry-run command: /opt/libc-test/bin/runtest -w functional/stdio/vfprintf")
+    );
+  }
+}
+
+#[test]
 fn adapter_rejects_runtest_prefix_without_arguments() {
   let temp_dir = TempDirGuard::new("i060-runtest-no-args");
   let manifest_path = temp_dir.path().join("libc-test-smoke.txt");

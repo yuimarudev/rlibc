@@ -1023,6 +1023,18 @@ fn quality_gate_script_usage_mentions_duplicate_option_rejection() {
 }
 
 #[test]
+fn quality_gate_script_usage_mentions_duplicate_profile_rejection_for_both_forms() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let required_snippet =
+    "duplicate --profile is rejected for both --profile <value> and --profile=<value> forms";
+
+  assert!(
+    script.contains(required_snippet),
+    "usage/profile contract must mention duplicate-profile rejection for both forms: {required_snippet}"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_mentions_duplicate_option_rejection_once() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let occurrence_count = script
@@ -1066,6 +1078,28 @@ fn quality_gate_script_usage_lists_duplicate_option_rejection_before_default_beh
   assert!(
     duplicate_rejection_index < default_index,
     "usage must list duplicate-option rejection guidance before continue-on-fail default behavior"
+  );
+}
+
+#[test]
+fn quality_gate_script_usage_lists_duplicate_option_rejection_after_equals_style_rejection() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let equals_style_rejection_line =
+    "equals-style values are rejected (for example: --continue-on-fail=1)";
+  let duplicate_rejection_line =
+    "duplicate options are rejected (for example: repeated --profile or --continue-on-fail)";
+  let equals_style_rejection_index = script.find(equals_style_rejection_line).unwrap_or_else(|| {
+    panic!(
+      "usage must contain continue-on-fail equals-style rejection line: {equals_style_rejection_line}"
+    )
+  });
+  let duplicate_rejection_index = script.find(duplicate_rejection_line).unwrap_or_else(|| {
+    panic!("usage must contain duplicate-option rejection line: {duplicate_rejection_line}")
+  });
+
+  assert!(
+    equals_style_rejection_index < duplicate_rejection_index,
+    "usage must list duplicate-option rejection guidance after equals-style rejection guidance"
   );
 }
 

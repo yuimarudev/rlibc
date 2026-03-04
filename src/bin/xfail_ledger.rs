@@ -234,8 +234,15 @@ fn parse_args(args: &[String]) -> Result<Action, String> {
         seen_results_argument = true;
       }
       _ if argument.starts_with("--strict-xpass=") => {
-        let value = equals_option_value(argument, "--strict-xpass")
-          .map_err(|_| "--strict-xpass does not take a value".to_string())?;
+        let value = match equals_option_value(argument, "--strict-xpass") {
+          Ok(value) => value,
+          Err(error) if error.contains("empty value is not allowed") => {
+            return Err(
+              "--strict-xpass does not take a value: empty value is not allowed".to_string(),
+            );
+          }
+          Err(_) => return Err("--strict-xpass does not take a value".to_string()),
+        };
 
         return Err(format!("--strict-xpass does not take a value: `{value}`"));
       }

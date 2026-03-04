@@ -10,8 +10,8 @@
 //! handle as closed but does not attempt to unmap code/data in this phase.
 
 use crate::abi::errno::{
-  EACCES, EADDRINUSE, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST, EINTR, EINVAL,
-  EISDIR, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE, ETIMEDOUT,
+  EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST, EINTR,
+  EINVAL, EISDIR, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE, ETIMEDOUT,
 };
 use crate::abi::types::{c_char, c_int, c_void};
 use crate::errno::{__errno_location, set_errno};
@@ -279,6 +279,7 @@ fn normalize_dlsym_missing_symbol_detail(symbol_label: &str, detail: &str) -> Op
   if trimmed_detail.is_empty() {
     return None;
   }
+
   let mut normalized = trimmed_detail;
 
   loop {
@@ -444,6 +445,7 @@ const fn io_error_kind_errno(error_kind: io::ErrorKind) -> Option<c_int> {
     io::ErrorKind::ConnectionAborted => Some(ECONNABORTED),
     io::ErrorKind::NotConnected => Some(ENOTCONN),
     io::ErrorKind::AddrInUse => Some(EADDRINUSE),
+    io::ErrorKind::AddrNotAvailable => Some(EADDRNOTAVAIL),
     io::ErrorKind::PermissionDenied => Some(EACCES),
     io::ErrorKind::InvalidInput => Some(EINVAL),
     io::ErrorKind::Interrupted => Some(EINTR),
@@ -701,6 +703,8 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 ///   before the host-detail colon (for example `<symbol> : detail`).
 /// - repeated colons after the symbol prefix are collapsed during
 ///   normalization (for example `<symbol>::detail`).
+/// - repeated `<symbol>:` prefix chains in host detail are also collapsed to
+///   avoid duplicate symbol echoes in the final diagnostic.
 /// - host details containing only the symbol label (with optional surrounding
 ///   spaces) are treated as empty and omitted.
 ///

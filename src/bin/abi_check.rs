@@ -2402,6 +2402,24 @@ memcpy
   }
 
   #[test]
+  fn parse_snapshot_accepts_trailing_crlf_empty_line_after_symbols_block() {
+    let snapshot = concat!(
+      "ABI_SNAPSHOT_V1\r\n",
+      "ELF_CLASS=ELF64\r\n",
+      "ELF_MACHINE=Advanced Micro Devices X86-64\r\n",
+      "SYMBOLS:\r\n",
+      "memcpy\r\n",
+      "\r\n",
+    );
+    let parsed = parse_snapshot(snapshot)
+      .expect("trailing CRLF empty line after symbol list should be accepted");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
+    assert_eq!(parsed.symbols, BTreeSet::from(["memcpy".to_string()]));
+  }
+
+  #[test]
   fn parse_snapshot_rejects_trailing_whitespace_only_line_after_symbols_block() {
     let snapshot = concat!(
       "ABI_SNAPSHOT_V1\n",

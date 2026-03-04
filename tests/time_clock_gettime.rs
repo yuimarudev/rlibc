@@ -332,6 +332,49 @@ fn dynamic_clockid_alias_for_min_fd_matches_zero_fd_result_class() {
 }
 
 #[test]
+fn dynamic_clockid_alias_for_min_fd_after_null_timespec_matches_zero_fd_errno_contract() {
+  let mut min_ts = timespec {
+    tv_sec: 505,
+    tv_nsec: 606,
+  };
+  let min_before = min_ts;
+  let mut zero_ts = timespec {
+    tv_sec: 707,
+    tv_nsec: 808,
+  };
+  let zero_before = zero_ts;
+
+  write_errno(EFAULT);
+  let min_result = clock_gettime(fd_to_clockid(c_int::MIN), &raw mut min_ts);
+  let min_errno = read_errno();
+
+  write_errno(EFAULT);
+  let zero_result = clock_gettime(fd_to_clockid(0), &raw mut zero_ts);
+  let zero_errno = read_errno();
+
+  assert_eq!(fd_to_clockid(c_int::MIN), fd_to_clockid(0));
+  assert_eq!(min_result, zero_result);
+
+  if min_result == 0 {
+    assert!(min_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&min_ts.tv_nsec));
+    assert_eq!(min_errno, EFAULT);
+
+    assert!(zero_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&zero_ts.tv_nsec));
+    assert_eq!(zero_errno, EFAULT);
+
+    return;
+  }
+
+  assert_eq!(min_result, -1);
+  assert_eq!(min_errno, EINVAL);
+  assert_eq!(zero_errno, EINVAL);
+  assert_eq!(min_ts, min_before);
+  assert_eq!(zero_ts, zero_before);
+}
+
+#[test]
 fn dynamic_clockid_alias_for_max_fd_follows_thread_cputime_errno_contract() {
   let mut ts = timespec {
     tv_sec: 0,

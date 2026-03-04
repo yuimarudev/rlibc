@@ -375,6 +375,22 @@ fn printf_percent_zn_success_does_not_clobber_errno() {
 }
 
 #[test]
+fn printf_percent_zn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%zn");
+  let mut count = usize::MAX;
+  let sentinel_errno = 1234_i32;
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: `%zn` receives a valid mutable `size_t*`.
+  let written = unsafe { printf(format.as_ptr(), core::ptr::addr_of_mut!(count)) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
+  assert_eq!(read_errno(), sentinel_errno);
+}
+
+#[test]
 fn printf_percent_jn_success_does_not_clobber_errno() {
   let format = c_string("%s%jn");
   let payload = c_string("abc");
@@ -952,6 +968,23 @@ fn vprintf_percent_zn_success_does_not_clobber_errno() {
 
   assert_eq!(written, 3);
   assert_eq!(count, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+}
+
+#[test]
+fn vprintf_percent_zn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%zn");
+  let mut count = usize::MAX;
+  let sentinel_errno = 1234_i32;
+  let mut args = OwnedVaList::from_u64_slots(vec![ptr_slot(core::ptr::addr_of_mut!(count))]);
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: va_list slots satisfy `%zn` contract (`size_t*`).
+  let written = unsafe { vprintf(format.as_ptr(), args.as_mut_ptr()) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
   assert_eq!(read_errno(), sentinel_errno);
 }
 
@@ -1922,6 +1955,33 @@ fn vfprintf_percent_zn_success_does_not_clobber_errno() {
 
   assert_eq!(written, 3);
   assert_eq!(count, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
+fn vfprintf_percent_zn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%zn");
+  let mut count = usize::MAX;
+  let mut args = OwnedVaList::from_u64_slots(vec![ptr_slot(core::ptr::addr_of_mut!(count))]);
+  let sentinel_errno = 1234_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: argument slots satisfy `%zn` contract (`size_t*`).
+  let written = unsafe { vfprintf(stream, format.as_ptr(), args.as_mut_ptr()) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
   assert_eq!(read_errno(), sentinel_errno);
 
   // SAFETY: stream came from `tmpfile`.
@@ -3108,6 +3168,32 @@ fn fprintf_percent_zn_success_does_not_clobber_errno() {
 
   assert_eq!(written, 3);
   assert_eq!(count, 3);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
+fn fprintf_percent_zn_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%zn");
+  let mut count = usize::MAX;
+  let sentinel_errno = 1234_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: variadic arguments match `%zn` contract (`size_t*`).
+  let written = unsafe { fprintf(stream, format.as_ptr(), core::ptr::addr_of_mut!(count)) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
   assert_eq!(read_errno(), sentinel_errno);
 
   // SAFETY: stream came from `tmpfile`.

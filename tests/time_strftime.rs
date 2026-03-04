@@ -391,6 +391,20 @@ fn strftime_o_alternative_modifier_j_aliases_leap_year_upper_bound() {
 }
 
 #[test]
+fn strftime_o_alternative_modifier_j_aliases_non_leap_year_upper_bound() {
+  let mut time_parts = fixture_tm();
+
+  time_parts.tm_year = 123;
+  time_parts.tm_yday = 364;
+
+  let expected = b"365|365";
+  let (written, output) = run_strftime(b"%Oj|%j\0", &time_parts, 32);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
 fn strftime_invalid_o_alternative_modifier_j_fallback_to_question_mark() {
   let mut time_parts = fixture_tm();
 

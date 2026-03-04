@@ -1313,6 +1313,34 @@ fn count_conversion_zn_uses_required_length_under_truncation() {
 }
 
 #[test]
+fn count_conversion_jn_and_zn_include_escaped_percent_lengths_under_truncation() {
+  let mut buffer = [0_u8; 4];
+  let mut intmax_written: i64 = -1;
+  let mut size_written: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(intmax_written).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(size_written).cast_const()),
+  ]);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"A%%BC%%D%jnE%zn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 7);
+  assert_eq!(&buffer, b"A%B\0");
+  assert_eq!(intmax_written, 6);
+  assert_eq!(size_written, 7);
+  assert_eq!(read_errno(), 0);
+}
+
+#[test]
 fn count_conversion_rejects_width_directive() {
   let mut buffer = [b'Q'; 8];
   let mut count: c_int = 123;

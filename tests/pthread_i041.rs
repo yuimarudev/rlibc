@@ -1220,6 +1220,72 @@ fn pthread_unknown_probe_interleaved_with_local_threads_stays_stable() {
 }
 
 #[test]
+fn pthread_unknown_probe_does_not_break_local_detached_eventual_release() {
+  let _serial = pthread_i041_serial_guard();
+  let baseline = create_joinable_thread(return_argument, ptr::null_mut());
+  // SAFETY: thread id was produced by `pthread_create`.
+  let baseline_join = unsafe { pthread_join(baseline, ptr::null_mut()) };
+  let Some(poisoned_first) = baseline.checked_add(1) else {
+    panic!("first pthread_t id increment overflowed unexpectedly");
+  };
+  let Some(poisoned_second) = poisoned_first.checked_add(1) else {
+    panic!("second pthread_t id increment overflowed unexpectedly");
+  };
+
+  assert_eq!(baseline_join, 0);
+
+  // SAFETY: probing unknown ids is intentional for regression coverage.
+  let first_join = unsafe { pthread_join(poisoned_first, ptr::null_mut()) };
+  let first_detach = pthread_detach(poisoned_first);
+  let second_detach = pthread_detach(poisoned_second);
+  // SAFETY: probing unknown ids is intentional for regression coverage.
+  let second_join = unsafe { pthread_join(poisoned_second, ptr::null_mut()) };
+
+  assert_eq!(first_join, ESRCH);
+  assert_eq!(first_detach, ESRCH);
+  assert_eq!(second_detach, ESRCH);
+  assert_eq!(second_join, ESRCH);
+
+  let state = Box::new(DetachCleanupState {
+    release: AtomicBool::new(false),
+    exited: AtomicBool::new(false),
+  });
+  let state_ptr = Box::into_raw(state);
+  let thread = create_joinable_thread(wait_for_release_then_exit, state_ptr.cast::<c_void>());
+  let first_detach_local = pthread_detach(thread);
+
+  assert_ne!(thread, poisoned_first);
+  assert_ne!(thread, poisoned_second);
+  assert_eq!(first_detach_local, 0);
+  assert_detached_handle_stays_einval_pre_exit(
+    thread,
+    "local detached thread must stay EINVAL before release after unknown probes",
+  );
+
+  release_and_wait_thread_exit(
+    state_ptr,
+    "local detached thread must exit after unknown probe sequence",
+  );
+  wait_until_detached_handle_released(
+    thread,
+    "local detached thread join path must still converge to ESRCH",
+  );
+  wait_until_detach_reports_esrch(
+    thread,
+    "local detached thread detach path must still converge to ESRCH",
+  );
+  assert_released_handle_stays_esrch(
+    thread,
+    "local detached thread must stay ESRCH after release despite unknown probes",
+  );
+
+  // SAFETY: ownership is reclaimed exactly once here.
+  unsafe {
+    drop(Box::from_raw(state_ptr));
+  }
+}
+
+#[test]
 fn pthread_join_is_single_consumer() {
   let _serial = pthread_i041_serial_guard();
   let thread = create_joinable_thread(return_argument, ptr::null_mut());

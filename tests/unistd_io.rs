@@ -2501,6 +2501,26 @@ fn send_non_socket_fd_with_zero_length_and_null_buffer_returns_minus_one_and_err
 }
 
 #[test]
+fn send_non_socket_fd_with_huge_length_and_null_buffer_returns_minus_one_and_errno_enotsock() {
+  let file_path = unique_temp_path("send-non-socket-huge-null");
+
+  fs::write(&file_path, b"not-socket").expect("failed to create non-socket huge/null fd test file");
+
+  let file = File::open(&file_path).expect("failed to open non-socket huge/null fd test file");
+
+  set_errno(0);
+
+  // SAFETY: fd is intentionally not a socket and null pointer is passed for invalid huge-length call.
+  let sent = unsafe { send(file.as_raw_fd(), core::ptr::null(), size_t::MAX, 0) };
+
+  assert_eq!(sent, -1);
+  assert_eq!(errno_value(), ENOTSOCK);
+
+  drop(file);
+  fs::remove_file(file_path).expect("failed to remove non-socket huge/null fd test file");
+}
+
+#[test]
 fn send_nosignal_after_peer_shutdown_returns_minus_one_and_errno_epipe() {
   let payload = [0x66_u8];
   let (reader, writer) = std::os::unix::net::UnixStream::pair()

@@ -985,8 +985,8 @@ fn setvbuf_line_buffered_mode_flushes_dynamic_width_and_precision_percent_f_with
 }
 
 #[test]
-fn setvbuf_line_buffered_mode_defers_dynamic_width_and_precision_percent_f_with_escaped_percent_until_fflush(
-) {
+fn setvbuf_line_buffered_mode_defers_dynamic_width_and_precision_percent_f_with_escaped_percent_until_fflush()
+ {
   let _guard = test_lock();
   let format = b"%*.*f%%\0";
   // SAFETY: host libc provides a valid stream or null on allocation failure.
@@ -1606,6 +1606,124 @@ fn setvbuf_line_buffered_mode_flushes_negative_dynamic_width_and_precision_perce
     end_offset,
     c_long::from(6),
     "line-buffered mode must flush when negative-width `%*.*s` precision includes an emitted newline",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_flushes_dynamic_width_and_precision_percent_s_with_negative_precision()
+ {
+  let _guard = test_lock();
+  let format = b"%*.*s\0";
+  let payload = b"ab\ncd\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I023 dynamic width+negative precision flush test"
+  );
+
+  write_errno(91);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 91);
+
+  write_errno(97);
+
+  // SAFETY: stream and variadic arguments satisfy `fprintf("%*.*s", int, int, const char*)`.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      c_int::from(6),
+      c_int::from(-1),
+      payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(
+    written, 6,
+    "negative precision should behave as unspecified precision and honor dynamic width",
+  );
+  assert_eq!(read_errno(), 97);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset,
+    c_long::from(6),
+    "line-buffered mode must flush when negative precision leaves newline in `%*.*s` output",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_flushes_negative_dynamic_width_and_negative_precision_percent_s_with_newline(
+) {
+  let _guard = test_lock();
+  let format = b"%*.*s\0";
+  let payload = b"ab\ncd\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I022 negative width+negative precision %s flush test"
+  );
+
+  write_errno(101);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 101);
+
+  write_errno(103);
+
+  // SAFETY: stream and variadic arguments satisfy `fprintf("%*.*s", int, int, const char*)`.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      c_int::from(-6),
+      c_int::from(-1),
+      payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(
+    written, 6,
+    "negative width and negative precision should emit a six-byte field when newline remains in `%s` output",
+  );
+  assert_eq!(read_errno(), 103);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset,
+    c_long::from(6),
+    "line-buffered mode must flush when negative precision keeps newline in negative-width `%*.*s` output",
   );
 
   // SAFETY: stream came from `tmpfile`.

@@ -52,6 +52,7 @@ Profiles:
 Options:
   --profile <pr|nightly|full>  select quality-gate profile
                      supports --profile <value> and --profile=<value> forms
+                     duplicate --profile is rejected for both --profile <value> and --profile=<value> forms
   --continue-on-fail  keep running remaining profile steps and exit non-zero at end if any step failed (flag only; no value)
                      equals-style values are rejected (for example: --continue-on-fail=1)
                      duplicate options are rejected (for example: repeated --profile or --continue-on-fail)
