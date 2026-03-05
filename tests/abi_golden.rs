@@ -2923,7 +2923,7 @@ fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_path_value() 
 }
 
 #[test]
-fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_as_path() {
+fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_equals_value() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
@@ -2937,18 +2937,14 @@ fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_a
 
   assert!(
     !output.status.success(),
-    "abi_check must treat whitespace-prefixed option-like --golden=<...> value as a golden path\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    "abi_check must reject whitespace-prefixed option-like --golden=<...> values\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
     output.status,
     stdout,
     stderr,
   );
   assert!(
-    stderr.contains("failed to read golden snapshot"),
-    "abi_check stderr must explain file-read failure for whitespace-prefixed option-like --golden=<...> values\nstderr:\n{stderr}",
-  );
-  assert!(
-    stderr.contains("--bogus"),
-    "abi_check stderr must include the unresolved whitespace-prefixed option-like path token\nstderr:\n{stderr}",
+    stderr.contains("missing value for --golden"),
+    "abi_check stderr must explain rejection for whitespace-prefixed option-like --golden=<...> values\nstderr:\n{stderr}",
   );
 }
 
@@ -3009,8 +3005,7 @@ fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_path_value_be
 }
 
 #[test]
-fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_as_golden_path_before_help()
- {
+fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_equals_value_before_help() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
@@ -3025,20 +3020,20 @@ fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_a
 
   assert!(
     !output.status.success(),
-    "abi_check must not treat --help as help when whitespace-prefixed option-like --golden=<...> is present\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    "abi_check must reject whitespace-prefixed option-like --golden=<...> values before --help\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
     output.status,
     stdout,
     stderr,
   );
   assert!(
-    stderr.contains("unknown argument: --help"),
-    "abi_check stderr must report --help as an unknown positional argument in this parse mode\nstderr:\n{stderr}",
+    stderr.contains("missing value for --golden"),
+    "abi_check stderr must explain rejection for whitespace-prefixed option-like --golden=<...> values before --help\nstderr:\n{stderr}",
   );
 }
 
 #[test]
-fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_as_golden_path_before_short_help()
- {
+fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_equals_value_before_short_help()
+{
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
@@ -3053,14 +3048,14 @@ fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_a
 
   assert!(
     !output.status.success(),
-    "abi_check must not treat -h as help when whitespace-prefixed option-like --golden=<...> is present\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    "abi_check must reject whitespace-prefixed option-like --golden=<...> values before -h\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
     output.status,
     stdout,
     stderr,
   );
   assert!(
-    stderr.contains("unknown argument: -h"),
-    "abi_check stderr must report -h as an unknown positional argument in this parse mode\nstderr:\n{stderr}",
+    stderr.contains("missing value for --golden"),
+    "abi_check stderr must explain rejection for whitespace-prefixed option-like --golden=<...> values before -h\nstderr:\n{stderr}",
   );
 }
 

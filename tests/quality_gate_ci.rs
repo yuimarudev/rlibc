@@ -394,6 +394,39 @@ fn quality_gate_script_full_profile_runs_nightly_before_optional_adapters() {
 }
 
 #[test]
+fn quality_gate_script_full_profile_optional_adapter_order_is_stable() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let full_body = extract_function_body_lines(&script, "run_full_profile() {");
+  let libc_adapter_if = "if [[ -x scripts/conformance/libc-test-adapter.sh ]]; then";
+  let ltp_adapter_if = concat!(
+    "if [[ -x scripts/conformance/ltp-openposix-adapter.sh ]] && [[ -n \"${",
+    "RLIBC_LTP_SUITE_ROOT:-}\" ]]; then"
+  );
+  let xfail_ledger_if = "if [[ -f docs/conformance/xfail-ledger.csv ]]; then";
+  let libc_adapter_if_index = full_body
+    .iter()
+    .position(|line| line == libc_adapter_if)
+    .unwrap_or_else(|| panic!("full profile must contain adapter guard: {libc_adapter_if}"));
+  let ltp_adapter_if_index = full_body
+    .iter()
+    .position(|line| line == ltp_adapter_if)
+    .unwrap_or_else(|| panic!("full profile must contain adapter guard: {ltp_adapter_if}"));
+  let xfail_ledger_if_index = full_body
+    .iter()
+    .position(|line| line == xfail_ledger_if)
+    .unwrap_or_else(|| panic!("full profile must contain xfail-ledger guard: {xfail_ledger_if}"));
+
+  assert!(
+    libc_adapter_if_index < ltp_adapter_if_index,
+    "full profile must evaluate libc-test adapter branch before ltp-openposix adapter branch"
+  );
+  assert!(
+    ltp_adapter_if_index < xfail_ledger_if_index,
+    "full profile must evaluate xfail-ledger validation branch after optional adapter branches"
+  );
+}
+
+#[test]
 fn quality_gate_script_full_profile_gates_ltp_adapter_on_env_and_executable() {
   let script = read_repository_file("scripts/quality-gate.sh");
 
@@ -1898,8 +1931,13 @@ fn command_uses_supported_runtest_prefix_rejects_trailing_inline_comment_suffix(
 fn command_uses_supported_runtest_prefix_rejects_shell_suffixes_for_bin_runtest_prefixes() {
   for command in [
     "bin/runtest -w functional/argv # comment",
+    "./bin/runtest -w functional/argv # comment",
+    "bin/runtest -w functional/*",
     "./bin/runtest -w functional/*",
+    "bin/runtest -w functional/arg?",
+    "./bin/runtest -w functional/arg?",
     "bin/runtest -w functional/argv || echo unexpected",
+    "./bin/runtest -w functional/argv || echo unexpected",
   ] {
     assert!(
       !command_uses_supported_runtest_prefix(command),
@@ -1935,6 +1973,9 @@ fn command_uses_supported_runtest_prefix_rejects_shell_suffixes_for_dot_runtest_
     "./runtest -w functional/argv | cat",
     "./runtest -w functional/argv > /tmp/rlibc-i060-dot-runtest-out",
     "./runtest -w functional/argv < /tmp/rlibc-i060-dot-runtest-in",
+    "./runtest -w functional/*",
+    "./runtest -w functional/arg?",
+    "./runtest -w functional/argv # comment",
   ] {
     assert!(
       !command_uses_supported_runtest_prefix(command),

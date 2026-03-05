@@ -1673,6 +1673,30 @@ mod tests {
   }
 
   #[test]
+  fn register_open_handle_with_max_handle_cleans_trackable_zero_entry() {
+    let mut registry = DlHandleRegistry::new();
+    let max_handle = usize::MAX as *mut c_void;
+
+    registry.handles.insert(
+      TRACKABLE_NULL_HANDLE_ID,
+      DlHandleState::Open { refcount: 2 },
+    );
+
+    registry.register_open_handle(max_handle);
+
+    assert_eq!(registry.handle_state(TRACKABLE_NULL_HANDLE_ID), None);
+    assert_eq!(registry.handle_state(max_handle as usize), None);
+
+    let allocated = registry.allocate_test_handle(1);
+
+    assert_eq!(allocated as usize, 1);
+    assert_eq!(
+      registry.handle_state(allocated as usize),
+      Some(DlHandleState::Open { refcount: 1 })
+    );
+  }
+
+  #[test]
   fn register_open_handle_ignores_null_handle_without_tracking_state() {
     let mut registry = DlHandleRegistry::new();
 

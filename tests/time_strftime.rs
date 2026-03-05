@@ -450,6 +450,24 @@ fn strftime_o_alternative_modifier_s_aliases_epoch_seconds_token() {
 }
 
 #[test]
+fn strftime_o_alternative_modifier_s_aliases_negative_epoch_seconds() {
+  let mut time_parts = fixture_tm();
+
+  time_parts.tm_year = 69;
+  time_parts.tm_mon = 11;
+  time_parts.tm_mday = 31;
+  time_parts.tm_hour = 23;
+  time_parts.tm_min = 59;
+  time_parts.tm_sec = 59;
+
+  let expected = b"-1|-1";
+  let (written, output) = run_strftime(b"%Os|%s\0", &time_parts, 64);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
 fn strftime_o_alternative_modifier_n_and_t_alias_control_tokens() {
   let expected = b"\n|\n|\t|\t";
   let (written, output) = run_strftime(b"%On|%n|%Ot|%t\0", &fixture_tm(), 32);
@@ -467,6 +485,25 @@ fn strftime_invalid_o_alternative_modifier_j_fallback_to_question_mark() {
 
   let expected = b"?";
   let (written, output) = run_strftime(b"%Oj\0", &time_parts, 8);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
+fn strftime_unsupported_o_aliases_for_c_locale_composite_tokens_are_emitted_verbatim() {
+  let expected = b"%Ox|%OX|%Oc";
+  let (written, output) = run_strftime(b"%Ox|%OX|%Oc\0", &fixture_tm(), 32);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
+fn strftime_unsupported_o_aliases_for_c_locale_composite_tokens_do_not_consume_following_conversions()
+ {
+  let expected = b"%Ox2024|%OX01|%Oc02";
+  let (written, output) = run_strftime(b"%Ox%Y|%OX%m|%Oc%d\0", &fixture_tm(), 64);
 
   assert_eq!(written, expected.len());
   assert_eq!(c_string_prefix(&output), expected);

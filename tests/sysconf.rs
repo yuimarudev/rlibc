@@ -1850,6 +1850,42 @@ fn sysconf_nprocessors_conf_repeated_success_preserves_enametoolong_from_gethost
 }
 
 #[test]
+fn sysconf_nprocessors_conf_repeated_success_preserves_enametoolong_from_gethostname_failure() {
+  let mut short_buffer = [0 as c_char; 1];
+
+  set_errno(0);
+
+  // SAFETY: `short_buffer` is valid writable memory and `len` matches it.
+  let gethostname_result =
+    unsafe { gethostname(short_buffer.as_mut_ptr(), short_buffer.len() as size_t) };
+
+  assert_eq!(gethostname_result, -1);
+  assert_eq!(read_errno(), ENAMETOOLONG);
+
+  let first_configured = query(_SC_NPROCESSORS_CONF);
+  let first_errno = read_errno();
+  let second_configured = query(_SC_NPROCESSORS_CONF);
+  let second_errno = read_errno();
+
+  assert!(
+    first_configured > 0,
+    "_SC_NPROCESSORS_CONF must be positive"
+  );
+  assert!(
+    second_configured > 0,
+    "_SC_NPROCESSORS_CONF must be positive"
+  );
+  assert_eq!(
+    first_errno, ENAMETOOLONG,
+    "first successful _SC_NPROCESSORS_CONF query must preserve ENAMETOOLONG",
+  );
+  assert_eq!(
+    second_errno, ENAMETOOLONG,
+    "second successful _SC_NPROCESSORS_CONF query must preserve ENAMETOOLONG",
+  );
+}
+
+#[test]
 fn sysconf_unsupported_name_sets_einval() {
   set_errno(0);
 

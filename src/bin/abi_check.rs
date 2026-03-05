@@ -293,10 +293,6 @@ fn is_option_like_value(value: &str) -> bool {
   value.trim_start().starts_with('-')
 }
 
-fn has_leading_whitespace(value: &str) -> bool {
-  value.chars().next().is_some_and(char::is_whitespace)
-}
-
 fn assign_golden_path(
   options: &mut CliOptions,
   path: &str,
@@ -309,8 +305,7 @@ fn assign_golden_path(
   }
 
   let option_like = is_option_like_value(path);
-  let invalid_dash_prefixed_path =
-    option_like && (!allow_dash_prefix || has_leading_whitespace(path));
+  let invalid_dash_prefixed_path = option_like && !allow_dash_prefix;
 
   if is_missing_option_value(path) || invalid_dash_prefixed_path {
     return Err(format!("missing value for {GOLDEN_FLAG}"));
@@ -963,12 +958,18 @@ mod tests {
   }
 
   #[test]
-  fn parse_cli_options_rejects_whitespace_prefixed_option_like_golden_equals_value() {
+  fn parse_cli_options_accepts_whitespace_prefixed_option_like_golden_equals_value() {
     let args = vec!["--golden=   --bogus".to_string()];
-    let error = parse_cli_options(&args)
-      .expect_err("whitespace-prefixed option-like equals-style value must fail");
+    let actual = parse_cli_options(&args)
+      .expect("whitespace-prefixed option-like equals-style value must parse");
 
-    assert!(error.contains("missing value for --golden"));
+    assert_eq!(
+      actual,
+      CliOptions {
+        library_path: None,
+        golden_path: Some("   --bogus".to_string()),
+      }
+    );
   }
 
   #[test]

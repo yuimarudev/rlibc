@@ -808,6 +808,7 @@ fn project_name_matches_manifest_package_name() {
 #[test]
 fn project_name_c_string_accessors_stay_consistent() {
   let c_name = rlibc::project_name_cstr();
+  let c_name_again = rlibc::project_name_cstr();
   let name_bytes = rlibc::project_name().as_bytes();
   let c_name_bytes = rlibc::project_name_cstr_bytes();
 
@@ -836,6 +837,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     c_name.as_ptr(),
     rlibc::project_name_cstr_ptr(),
     "project_name_cstr() pointer should match project_name_cstr_ptr()"
+  );
+  assert_eq!(
+    c_name_again.as_ptr(),
+    c_name.as_ptr(),
+    "project_name_cstr() should return a stable pointer across repeated calls"
   );
   assert_eq!(
     rlibc::project_name_cstr_len(),
@@ -887,6 +893,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     rlibc::project_name_cstr_ptr().cast::<u8>(),
     c_name_bytes.as_ptr(),
     "project_name_cstr_ptr() should point at the same static bytes as project_name_cstr_bytes()"
+  );
+  assert_eq!(
+    rlibc::project_name_cstr_bytes().as_ptr(),
+    c_name_bytes.as_ptr(),
+    "project_name_cstr_bytes() should expose stable storage across repeated calls"
   );
   assert!(
     !rlibc::project_name_cstr_ptr().is_null(),

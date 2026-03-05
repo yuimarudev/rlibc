@@ -1262,8 +1262,47 @@ fn adapter_rejects_dot_runtest_prefix_with_shell_operator_suffixes() {
 }
 
 #[test]
+fn adapter_rejects_dot_runtest_prefix_with_glob_and_comment_suffixes() {
+  for (name, command) in [
+    ("i060-dot-runtest-glob-star", "./runtest -w functional/*"),
+    (
+      "i060-dot-runtest-glob-question",
+      "./runtest -w functional/arg?",
+    ),
+    (
+      "i060-dot-runtest-inline-comment",
+      "./runtest -w functional/argv # inline comment",
+    ),
+  ] {
+    let temp_dir = TempDirGuard::new(name);
+    let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+
+    write_text(&manifest_path, &format!("case-a|{command}\n"));
+
+    let arguments = vec![
+      "--dry-run".to_string(),
+      "--profile".to_string(),
+      manifest_path.to_string_lossy().into_owned(),
+    ];
+    let output = run_adapter(&arguments);
+    let stderr = stderr_text(&output);
+
+    assert!(
+      !output.status.success(),
+      "glob/comment suffix for ./runtest prefix must fail: {command}"
+    );
+    assert!(stderr.contains("runtest smoke command contains unsupported shell operators"));
+    assert!(stderr.contains("line 1"));
+  }
+}
+
+#[test]
 fn adapter_rejects_bin_runtest_prefix_with_shell_operator_suffixes() {
   for (name, command) in [
+    (
+      "i060-bin-runtest-logical-or-suffix",
+      "bin/runtest -w functional/argv || echo unexpected",
+    ),
     (
       "i060-bin-runtest-logical-and-suffix",
       "bin/runtest -w functional/argv && echo unexpected",
@@ -1279,6 +1318,10 @@ fn adapter_rejects_bin_runtest_prefix_with_shell_operator_suffixes() {
     (
       "i060-bin-runtest-input-redirection-suffix",
       "bin/runtest -w functional/argv < /tmp/rlibc-i060-bin-runtest-in",
+    ),
+    (
+      "i060-dot-bin-runtest-logical-or-suffix",
+      "./bin/runtest -w functional/argv || echo unexpected",
     ),
     (
       "i060-dot-bin-runtest-logical-and-suffix",
@@ -1313,6 +1356,45 @@ fn adapter_rejects_bin_runtest_prefix_with_shell_operator_suffixes() {
     assert!(
       !output.status.success(),
       "shell-operator suffix for bin-runtest prefix must fail: {command}"
+    );
+    assert!(stderr.contains("runtest smoke command contains unsupported shell operators"));
+    assert!(stderr.contains("line 1"));
+  }
+}
+
+#[test]
+fn adapter_rejects_bin_runtest_prefix_with_glob_suffixes() {
+  for (name, command) in [
+    ("i060-bin-runtest-glob-star", "bin/runtest -w functional/*"),
+    (
+      "i060-bin-runtest-glob-question",
+      "bin/runtest -w functional/arg?",
+    ),
+    (
+      "i060-dot-bin-runtest-glob-star",
+      "./bin/runtest -w functional/*",
+    ),
+    (
+      "i060-dot-bin-runtest-glob-question",
+      "./bin/runtest -w functional/arg?",
+    ),
+  ] {
+    let temp_dir = TempDirGuard::new(name);
+    let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+
+    write_text(&manifest_path, &format!("case-a|{command}\n"));
+
+    let arguments = vec![
+      "--dry-run".to_string(),
+      "--profile".to_string(),
+      manifest_path.to_string_lossy().into_owned(),
+    ];
+    let output = run_adapter(&arguments);
+    let stderr = stderr_text(&output);
+
+    assert!(
+      !output.status.success(),
+      "glob suffix for bin-runtest prefix must fail: {command}"
     );
     assert!(stderr.contains("runtest smoke command contains unsupported shell operators"));
     assert!(stderr.contains("line 1"));
@@ -1422,28 +1504,36 @@ fn adapter_rejects_runtest_prefix_with_trailing_inline_comment() {
 
 #[test]
 fn adapter_rejects_bin_runtest_prefix_with_trailing_inline_comment() {
-  let temp_dir = TempDirGuard::new("i060-bin-runtest-inline-comment");
-  let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+  for (name, command) in [
+    (
+      "i060-bin-runtest-inline-comment",
+      "bin/runtest -w functional/argv # inline comment",
+    ),
+    (
+      "i060-dot-bin-runtest-inline-comment",
+      "./bin/runtest -w functional/argv # inline comment",
+    ),
+  ] {
+    let temp_dir = TempDirGuard::new(name);
+    let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
 
-  write_text(
-    &manifest_path,
-    "case-a|bin/runtest -w functional/argv # inline comment\n",
-  );
+    write_text(&manifest_path, &format!("case-a|{command}\n"));
 
-  let arguments = vec![
-    "--dry-run".to_string(),
-    "--profile".to_string(),
-    manifest_path.to_string_lossy().into_owned(),
-  ];
-  let output = run_adapter(&arguments);
-  let stderr = stderr_text(&output);
+    let arguments = vec![
+      "--dry-run".to_string(),
+      "--profile".to_string(),
+      manifest_path.to_string_lossy().into_owned(),
+    ];
+    let output = run_adapter(&arguments);
+    let stderr = stderr_text(&output);
 
-  assert!(
-    !output.status.success(),
-    "inline comment in bin/runtest suffix must fail"
-  );
-  assert!(stderr.contains("runtest smoke command contains unsupported shell operators"));
-  assert!(stderr.contains("line 1"));
+    assert!(
+      !output.status.success(),
+      "inline comment in bin-runtest suffix must fail: {command}"
+    );
+    assert!(stderr.contains("runtest smoke command contains unsupported shell operators"));
+    assert!(stderr.contains("line 1"));
+  }
 }
 
 #[test]

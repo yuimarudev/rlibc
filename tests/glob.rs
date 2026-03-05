@@ -671,6 +671,44 @@ fn glob_nocheck_preserves_escaped_trailing_separator_literal() {
 }
 
 #[test]
+fn glob_nocheck_trims_trailing_separator_after_even_backslashes() {
+  let temp_dir = TempDir::new();
+  let pattern = pattern(temp_dir.path(), r"still-missing-i037\\/");
+  let mut state = GlobState::new();
+  let result = run_glob(&pattern, GLOB_NOCHECK, &mut state);
+
+  assert_eq!(result, 0);
+  assert_eq!(state.path_count(), 1);
+  assert_eq!(
+    state.paths(),
+    vec![format!(
+      "{}/{}",
+      stringify_path(temp_dir.path()),
+      r"still-missing-i037\\"
+    )]
+  );
+}
+
+#[test]
+fn glob_nocheck_preserves_trailing_separator_after_odd_backslashes() {
+  let temp_dir = TempDir::new();
+  let pattern = pattern(temp_dir.path(), r"still-missing-i037\\\/");
+  let mut state = GlobState::new();
+  let result = run_glob(&pattern, GLOB_NOCHECK, &mut state);
+
+  assert_eq!(result, 0);
+  assert_eq!(state.path_count(), 1);
+  assert_eq!(
+    state.paths(),
+    vec![format!(
+      "{}/{}",
+      stringify_path(temp_dir.path()),
+      r"still-missing-i037\\\/"
+    )]
+  );
+}
+
+#[test]
 fn glob_dooffs_reserves_leading_null_slots_and_terminator() {
   let temp_dir = TempDir::new();
 

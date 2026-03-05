@@ -688,6 +688,26 @@ fn exp_negative_zero_preserves_errno_and_does_not_raise_exceptions() {
 }
 
 #[test]
+fn exp_positive_infinity_preserves_preexisting_invalid_exception_flag() {
+  clear_all_excepts();
+  write_errno(EDOM);
+
+  let raise_status = feraiseexcept(FE_INVALID);
+
+  assert_eq!(raise_status, 0, "feraiseexcept must succeed");
+  assert_ne!(fetestexcept(FE_INVALID), 0);
+
+  let result = exp(f64::INFINITY);
+
+  assert!(result.is_infinite() && result.is_sign_positive());
+  assert_eq!(read_errno(), EDOM);
+  assert_ne!(fetestexcept(FE_INVALID), 0);
+  assert_eq!(fetestexcept(FE_DIVBYZERO), 0);
+  assert_eq!(fetestexcept(FE_OVERFLOW), 0);
+  assert_eq!(fetestexcept(FE_UNDERFLOW), 0);
+}
+
+#[test]
 fn positive_infinity_inputs_do_not_set_errno_or_exceptions() {
   clear_all_excepts();
   write_errno(ERANGE);

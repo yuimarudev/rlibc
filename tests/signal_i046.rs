@@ -164,6 +164,18 @@ fn kill_with_process_group_target_and_negative_signal_returns_einval() {
 }
 
 #[test]
+fn kill_with_process_group_target_and_first_out_of_range_signal_returns_einval() {
+  let _lock = signal_lock();
+
+  write_errno(0);
+
+  let status = kill(0, FIRST_OUT_OF_RANGE_SIGNAL);
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EINVAL);
+}
+
+#[test]
 fn kill_with_broadcast_target_and_invalid_signal_returns_einval() {
   let _lock = signal_lock();
 

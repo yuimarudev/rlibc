@@ -689,6 +689,26 @@ fn getpagesize_preserves_enametoolong_from_gethostname_zero_length_failure() {
 }
 
 #[test]
+fn getpagesize_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure() {
+  write_errno(0);
+
+  let failed = unsafe { gethostname(core::ptr::null_mut(), 0 as size_t) };
+
+  assert_eq!(failed, -1);
+  assert_eq!(read_errno(), ENAMETOOLONG);
+
+  let first_page_size = getpagesize();
+  let first_errno = read_errno();
+  let second_page_size = getpagesize();
+  let second_errno = read_errno();
+
+  assert_eq!(first_page_size, 4096);
+  assert_eq!(second_page_size, 4096);
+  assert_eq!(first_errno, ENAMETOOLONG);
+  assert_eq!(second_errno, ENAMETOOLONG);
+}
+
+#[test]
 fn getpagesize_preserves_efault_from_gethostname_null_failure() {
   write_errno(0);
 

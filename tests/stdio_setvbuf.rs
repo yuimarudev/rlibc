@@ -1179,78 +1179,6 @@ fn setvbuf_line_buffered_mode_flushes_percent_s_newline_after_percent_upper_a_wi
 }
 
 #[test]
-fn setvbuf_line_buffered_mode_defers_percent_s_without_newline_after_percent_g_until_fflush() {
-  let _guard = test_lock();
-  let format = b"%g%s\0";
-  let suffix = b"tail\0";
-  // SAFETY: host libc provides a valid stream or null on allocation failure.
-  let stream = unsafe { tmpfile() };
-
-  assert!(
-    !stream.is_null(),
-    "tmpfile stream must be available for I022 mixed %g/%s defer test"
-  );
-
-  write_errno(67);
-
-  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
-  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
-
-  assert_eq!(setvbuf_status, 0);
-  assert_eq!(read_errno(), 67);
-
-  write_errno(71);
-
-  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%g%s", double, char*)`.
-  let written = unsafe {
-    fprintf(
-      stream,
-      format.as_ptr().cast(),
-      1.25_f64,
-      suffix.as_ptr().cast::<c_char>(),
-    )
-  };
-
-  assert!(
-    written > 0,
-    "line-buffered mixed %g/%s output without newline must produce bytes",
-  );
-  assert_eq!(read_errno(), 71);
-  // SAFETY: `fileno` expects a valid host FILE pointer.
-  let fd = unsafe { fileno(stream) };
-
-  assert!(fd >= 0, "stream must expose file descriptor");
-  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
-  let end_offset_before_flush = unsafe { lseek(fd, 0, SEEK_END) };
-
-  assert_eq!(
-    end_offset_before_flush, 0,
-    "line-buffered mode must defer when downstream %s emits no newline after %g",
-  );
-
-  write_errno(73);
-
-  // SAFETY: stream pointer came from `tmpfile` and is valid for host flush.
-  let flush_status = unsafe { fflush(stream) };
-
-  assert_eq!(flush_status, 0);
-  assert_eq!(read_errno(), 73);
-  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
-  let end_offset_after_flush = unsafe { lseek(fd, 0, SEEK_END) };
-
-  assert_eq!(
-    end_offset_after_flush,
-    c_long::from(written),
-    "fflush must make deferred mixed %g/%s output visible",
-  );
-
-  // SAFETY: stream came from `tmpfile`.
-  let close_status = unsafe { fclose(stream) };
-
-  assert_eq!(close_status, 0);
-}
-
-#[test]
 fn setvbuf_line_buffered_mode_defers_percent_s_without_newline_after_percent_upper_a_until_fflush()
 {
   let _guard = test_lock();
@@ -1315,6 +1243,78 @@ fn setvbuf_line_buffered_mode_defers_percent_s_without_newline_after_percent_upp
     end_offset_after_flush,
     c_long::from(written),
     "fflush must make deferred mixed %A/%s output visible",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_defers_percent_s_without_newline_after_percent_g_until_fflush() {
+  let _guard = test_lock();
+  let format = b"%g%s\0";
+  let suffix = b"tail\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I022 mixed %g/%s defer test"
+  );
+
+  write_errno(67);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 67);
+
+  write_errno(71);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%g%s", double, char*)`.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      1.25_f64,
+      suffix.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert!(
+    written > 0,
+    "line-buffered mixed %g/%s output without newline must produce bytes",
+  );
+  assert_eq!(read_errno(), 71);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_before_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_before_flush, 0,
+    "line-buffered mode must defer when downstream %s emits no newline after %g",
+  );
+
+  write_errno(73);
+
+  // SAFETY: stream pointer came from `tmpfile` and is valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 73);
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_after_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_after_flush,
+    c_long::from(written),
+    "fflush must make deferred mixed %g/%s output visible",
   );
 
   // SAFETY: stream came from `tmpfile`.
@@ -1529,6 +1529,71 @@ fn setvbuf_line_buffered_mode_defers_dynamic_width_and_precision_percent_f_with_
     end_offset_after_flush,
     c_long::from(written),
     "fflush must make deferred dynamic width/precision %f%% output visible",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_defers_negative_dynamic_width_and_precision_percent_f_with_escaped_percent_until_fflush()
+ {
+  let _guard = test_lock();
+  let format = b"%*.*f%%\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I022 negative dynamic width/precision %f%% defer test"
+  );
+
+  write_errno(107);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 107);
+
+  write_errno(109);
+
+  // SAFETY: stream and variadic arguments satisfy `fprintf("%*.*f%%", int, int, double)`.
+  let written = unsafe { fprintf(stream, format.as_ptr().cast(), -9, 3, 1.25_f64) };
+
+  assert!(
+    written > 0,
+    "negative dynamic width/precision floating-point output with escaped percent must produce bytes",
+  );
+  assert_eq!(read_errno(), 109);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_before_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_before_flush, 0,
+    "line-buffered mode must defer negative-width dynamic %f%% output without newline until fflush",
+  );
+
+  write_errno(113);
+
+  // SAFETY: stream pointer came from `tmpfile` and is valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 113);
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_after_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_after_flush,
+    c_long::from(written),
+    "fflush must make deferred negative-width dynamic %f%% output visible",
   );
 
   // SAFETY: stream came from `tmpfile`.
