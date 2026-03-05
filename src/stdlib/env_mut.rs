@@ -853,12 +853,19 @@ mod tests {
       Ok(guard) => guard,
       Err(poisoned) => poisoned.into_inner(),
     };
+    let key = b"RLIBC_I017_PUTENV_EMPTY_NAME_NO_ALIAS";
     let mut entry = b"=value\0".to_vec();
+
+    remove_putenv_alias(key);
+    assert!(lookup_putenv_alias_value(key).is_none());
+    write_errno(67);
 
     // SAFETY: `entry` points to a mutable NUL-terminated string.
     let rc = unsafe { putenv(entry.as_mut_ptr().cast()) };
 
     assert_eq!(rc, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert!(lookup_putenv_alias_value(key).is_none());
   }
 
   #[test]

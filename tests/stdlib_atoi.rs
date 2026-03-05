@@ -766,6 +766,48 @@ fn atoi_family_keeps_einval_after_null_input_then_sign_newline_digit_no_conversi
 }
 
 #[test]
+fn atoi_family_keeps_einval_after_null_input_then_minus_newline_digit_no_conversion() {
+  let input = b"-\n7\0";
+  let input_ptr = as_c_char_ptr(input);
+
+  write_errno(0);
+  // SAFETY: This test verifies null-pointer handling policy for wrapper entry points.
+  let null_int = unsafe { atoi(core::ptr::null()) };
+
+  assert_eq!(null_int, 0);
+  assert_eq!(read_errno(), EINVAL);
+  // SAFETY: `input` is NUL-terminated and readable.
+  let parsed_int = unsafe { atoi(input_ptr) };
+
+  assert_eq!(parsed_int, 0);
+  assert_eq!(read_errno(), EINVAL);
+
+  write_errno(0);
+  // SAFETY: This test verifies null-pointer handling policy for wrapper entry points.
+  let null_long = unsafe { atol(core::ptr::null()) };
+
+  assert_eq!(null_long, 0);
+  assert_eq!(read_errno(), EINVAL);
+  // SAFETY: `input` is NUL-terminated and readable.
+  let parsed_long = unsafe { atol(input_ptr) };
+
+  assert_eq!(parsed_long, 0);
+  assert_eq!(read_errno(), EINVAL);
+
+  write_errno(0);
+  // SAFETY: This test verifies null-pointer handling policy for wrapper entry points.
+  let null_wide = unsafe { atoll(core::ptr::null()) };
+
+  assert_eq!(null_wide, 0);
+  assert_eq!(read_errno(), EINVAL);
+  // SAFETY: `input` is NUL-terminated and readable.
+  let parsed_wide = unsafe { atoll(input_ptr) };
+
+  assert_eq!(parsed_wide, 0);
+  assert_eq!(read_errno(), EINVAL);
+}
+
+#[test]
 fn atoi_family_supports_partial_decimal_conversion() {
   let input = b"123abc\0";
   let input_ptr = as_c_char_ptr(input);

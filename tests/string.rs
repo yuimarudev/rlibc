@@ -689,6 +689,25 @@ fn strlen_and_strnlen_count_bytes_from_mid_utf8_scalar_with_tail_scalar() {
 }
 
 #[test]
+fn strlen_and_strnlen_stop_at_first_nul_from_mid_utf8_with_tail_scalar_and_extra_tail() {
+  let input = b"\xE5\xAF\xBF\xE5\x8F\xB8\0\xF0\x9F\x8D\xA3\0";
+  let base_ptr = as_c_char_ptr(input);
+  // SAFETY: offset by 1 byte stays within `input` (mid-scalar byte).
+  let offset_ptr = unsafe { base_ptr.add(1) };
+  // SAFETY: `offset_ptr` points into a valid NUL-terminated byte string.
+  let actual_len = unsafe { strlen(offset_ptr) };
+
+  for bound in [5_usize, input.len(), usize::MAX] {
+    // SAFETY: scanning stops at first in-bounds NUL before bound is exhausted.
+    let bounded_len = unsafe { strnlen(offset_ptr, bound) };
+
+    assert_eq!(bounded_len, 5, "bound={bound}");
+  }
+
+  assert_eq!(actual_len, 5);
+}
+
+#[test]
 fn strnlen_matches_min_of_bound_and_strlen_for_mid_utf8_with_tail_scalar() {
   let input = b"\xE5\xAF\xBF\xE5\x8F\xB8\0";
   let base_ptr = as_c_char_ptr(input);

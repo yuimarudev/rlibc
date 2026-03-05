@@ -576,6 +576,44 @@ fn fcntl_dupfd_cloexec_with_minimum_equal_to_source_fd_returns_distinct_fd() {
 }
 
 #[test]
+fn fcntl_dupfd_cloexec_skips_taken_minimum_descriptor() {
+  let (path, file) = create_read_only_temp_file(b"cloexec-taken");
+  let source_fd = file.as_raw_fd();
+  let first_minimum = source_fd + 2;
+
+  // SAFETY: `source_fd` is valid and `first_minimum` is an integer argument.
+  let first_duplicate_fd = unsafe { fcntl(source_fd, F_DUPFD_CLOEXEC, as_c_long(first_minimum)) };
+
+  assert!(first_duplicate_fd >= first_minimum);
+
+  // SAFETY: `first_duplicate_fd` is freshly returned by `F_DUPFD_CLOEXEC`
+  // and uniquely owned by this test.
+  let first_duplicate = unsafe { OwnedFd::from_raw_fd(first_duplicate_fd) };
+  let taken_minimum = first_duplicate.as_raw_fd();
+
+  // SAFETY: `source_fd` is valid and `taken_minimum` is an integer argument.
+  let second_duplicate_fd = unsafe { fcntl(source_fd, F_DUPFD_CLOEXEC, as_c_long(taken_minimum)) };
+
+  assert!(second_duplicate_fd > taken_minimum);
+
+  // SAFETY: `second_duplicate_fd` is freshly returned by `F_DUPFD_CLOEXEC`
+  // and uniquely owned by this test.
+  let second_duplicate = unsafe { OwnedFd::from_raw_fd(second_duplicate_fd) };
+
+  // SAFETY: `second_duplicate` is valid and command takes no pointer arguments.
+  let second_flags = unsafe { fcntl(second_duplicate.as_raw_fd(), F_GETFD, as_c_long(0)) };
+
+  assert!(second_flags >= 0);
+  assert_ne!(second_flags & FD_CLOEXEC, 0);
+
+  drop(second_duplicate);
+  drop(first_duplicate);
+  drop(file);
+  fs::remove_file(&path)
+    .unwrap_or_else(|error| panic!("failed to remove temp file {}: {error}", path.display()));
+}
+
+#[test]
 fn fcntl_dupfd_cloexec_success_keeps_errno_unchanged() {
   let (_reader, writer) = std::os::unix::net::UnixStream::pair()
     .expect("failed to create unix stream pair for fcntl cloexec errno test");

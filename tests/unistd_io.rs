@@ -1661,6 +1661,20 @@ fn recv_invalid_fd_with_waitall_flag_returns_minus_one_and_errno_ebadf() {
 }
 
 #[test]
+fn recv_invalid_fd_with_zero_length_and_waitall_flag_returns_minus_one_and_errno_ebadf() {
+  let mut byte = [0x28_u8; 1];
+
+  set_errno(0);
+
+  // SAFETY: `byte` is writable and fd is intentionally invalid.
+  let received = unsafe { recv(-1, byte.as_mut_ptr().cast::<c_void>(), sz(0), MSG_WAITALL) };
+
+  assert_eq!(received, -1);
+  assert_eq!(errno_value(), EBADF);
+  assert_eq!(byte, [0x28_u8; 1]);
+}
+
+#[test]
 fn recv_invalid_fd_with_peek_flag_returns_minus_one_and_errno_ebadf() {
   let mut byte = [0x26_u8; 1];
 

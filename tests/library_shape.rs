@@ -847,6 +847,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     "project_name_cstr_len() should stay non-zero for stable library identity"
   );
   assert_eq!(
+    c_name_bytes.first(),
+    name_bytes.first(),
+    "first payload byte should match between project_name and project_name_cstr_bytes"
+  );
+  assert_eq!(
     c_name.to_bytes().len(),
     rlibc::project_name_cstr_len(),
     "project_name_cstr() payload length should match project_name_cstr_len()"

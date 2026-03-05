@@ -423,3 +423,9 @@ fn errno_not_supported_alias_preserves_socket_band_position() {
   assert_eq!(ENOTSUP, ESOCKTNOSUPPORT + 1);
   assert_eq!(EPFNOSUPPORT, ENOTSUP + 1);
 }
+
+#[test]
+fn errno_deadlock_alias_preserves_slot_sequence() {
+  assert_eq!(EDEADLOCK, EDEADLK);
+  assert_eq!(ENAMETOOLONG, EDEADLOCK + 1);
+}

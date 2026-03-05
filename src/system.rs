@@ -724,6 +724,17 @@ mod tests {
   }
 
   #[test]
+  fn configured_processor_count_uses_present_file_when_possible_has_malformed_range_token() {
+    let count = configured_processor_count_with(
+      || Some(String::from("0--1")),
+      || Some(String::from("0-2")),
+      || 9,
+    );
+
+    assert_eq!(count, 3);
+  }
+
+  #[test]
   fn configured_processor_count_uses_present_file_when_possible_has_whitespace_inside_range_bounds()
   {
     let count = configured_processor_count_with(

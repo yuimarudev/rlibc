@@ -558,6 +558,14 @@ mod tests {
   }
 
   #[test]
+  fn parse_args_unknown_flag_before_bare_positional_still_fails_as_unknown() {
+    let error = parse_args(&["--target".to_string(), "positional".to_string()])
+      .expect_err("unknown flag before bare positional must fail as unknown");
+
+    assert_eq!(error, "unknown argument: --target");
+  }
+
+  #[test]
   fn parse_args_rejects_bare_positional_argument() {
     let error =
       parse_args(&["positional".to_string()]).expect_err("bare positional argument must fail");

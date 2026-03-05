@@ -581,6 +581,27 @@ fn fstatat_relative_path_with_invalid_fd_and_nofollow_sets_ebadf() {
 }
 
 #[test]
+fn fstatat_relative_path_with_invalid_fd_and_empty_path_and_nofollow_sets_ebadf() {
+  let path = CString::new("relative.txt").expect("CString::new failed");
+  let mut stat_buf = Stat::default();
+
+  write_errno(EINVAL);
+
+  // SAFETY: pointer arguments are valid; descriptor is intentionally invalid.
+  let rc = unsafe {
+    fstatat(
+      -1,
+      path.as_ptr(),
+      &raw mut stat_buf,
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(rc, -1);
+  assert_eq!(read_errno(), EBADF);
+}
+
+#[test]
 fn stat_and_lstat_missing_path_set_enoent() {
   let temp_dir = TempDir::new();
   let missing_path = temp_dir.path().join("does_not_exist");

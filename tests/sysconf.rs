@@ -1568,6 +1568,33 @@ fn sysconf_nprocessors_onln_repeated_success_keeps_errno_sentinel() {
 }
 
 #[test]
+fn sysconf_nprocessors_onln_repeated_success_preserves_efault_from_gethostname_null_failure() {
+  set_errno(0);
+
+  // SAFETY: null `name` with nonzero `len` must fail with `EFAULT`.
+  let gethostname_result = unsafe { gethostname(core::ptr::null_mut(), 8 as size_t) };
+
+  assert_eq!(gethostname_result, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  let first_online = query(_SC_NPROCESSORS_ONLN);
+  let first_errno = read_errno();
+  let second_online = query(_SC_NPROCESSORS_ONLN);
+  let second_errno = read_errno();
+
+  assert!(first_online > 0, "_SC_NPROCESSORS_ONLN must be positive");
+  assert!(second_online > 0, "_SC_NPROCESSORS_ONLN must be positive");
+  assert_eq!(
+    first_errno, EFAULT,
+    "first successful _SC_NPROCESSORS_ONLN query must preserve EFAULT",
+  );
+  assert_eq!(
+    second_errno, EFAULT,
+    "second successful _SC_NPROCESSORS_ONLN query must preserve EFAULT",
+  );
+}
+
+#[test]
 fn sysconf_nprocessors_onln_preserves_efault_from_gethostname_null_failure() {
   set_errno(0);
 

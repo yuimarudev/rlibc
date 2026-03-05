@@ -3531,3 +3531,206 @@ fn three_level_second_branch_starts_zero_after_first_branch_exit() {
     "nested writes must not clobber main-thread errno",
   );
 }
+
+#[test]
+fn three_level_branch_regeneration_keeps_boundary_writes_isolated() {
+  const TRUNK_FIRST: c_int = c_int::MAX - 17;
+  const TRUNK_SECOND: c_int = c_int::MIN + 99;
+  const FIRST_BRANCH_WRITE: c_int = c_int::MIN + 19;
+  const FIRST_LEAF_WRITE: c_int = c_int::MAX - 29;
+  const SECOND_BRANCH_WRITE: c_int = c_int::MAX - 55;
+  const SECOND_LEAF_WRITE: c_int = c_int::MIN + 57;
+
+  write_errno(-9000);
+
+  let main_slot = __errno_location() as usize;
+  let trunk_summary = thread::spawn(|| {
+    let trunk_slot = __errno_location() as usize;
+    let trunk_start = read_errno();
+
+    write_errno(TRUNK_FIRST);
+
+    let first_branch_summary = thread::spawn(|| {
+      let first_branch_slot = __errno_location() as usize;
+      let first_branch_start = read_errno();
+
+      write_errno(FIRST_BRANCH_WRITE);
+
+      let first_leaf_summary = thread::spawn(|| {
+        let first_leaf_slot = __errno_location() as usize;
+        let first_leaf_start = read_errno();
+
+        write_errno(FIRST_LEAF_WRITE);
+
+        (first_leaf_slot, first_leaf_start, read_errno())
+      })
+      .join()
+      .expect("first leaf thread panicked");
+      let first_branch_finish = read_errno();
+
+      (
+        first_branch_slot,
+        first_branch_start,
+        first_branch_finish,
+        first_leaf_summary,
+      )
+    })
+    .join()
+    .expect("first branch thread panicked");
+
+    write_errno(TRUNK_SECOND);
+
+    let second_branch_summary = thread::spawn(|| {
+      let second_branch_slot = __errno_location() as usize;
+      let second_branch_start = read_errno();
+      let second_branch_before = read_errno();
+
+      write_errno(SECOND_BRANCH_WRITE);
+
+      let second_leaf_summary = thread::spawn(|| {
+        let second_leaf_slot = __errno_location() as usize;
+        let second_leaf_start = read_errno();
+        let second_leaf_before = read_errno();
+
+        write_errno(SECOND_LEAF_WRITE);
+
+        (
+          second_leaf_slot,
+          second_leaf_start,
+          second_leaf_before,
+          read_errno(),
+        )
+      })
+      .join()
+      .expect("second leaf thread panicked");
+      let second_branch_finish = read_errno();
+
+      (
+        second_branch_slot,
+        second_branch_start,
+        second_branch_before,
+        second_branch_finish,
+        second_leaf_summary,
+      )
+    })
+    .join()
+    .expect("second branch thread panicked");
+    let trunk_finish = read_errno();
+
+    (
+      trunk_slot,
+      trunk_start,
+      trunk_finish,
+      first_branch_summary,
+      second_branch_summary,
+    )
+  })
+  .join()
+  .expect("trunk thread panicked");
+  let (trunk_slot, trunk_start, trunk_finish, first_branch_summary, second_branch_summary) =
+    trunk_summary;
+  let (first_branch_slot, first_branch_start, first_branch_finish, first_leaf_summary) =
+    first_branch_summary;
+  let (
+    second_branch_slot,
+    second_branch_start,
+    second_branch_before,
+    second_branch_finish,
+    second_leaf_summary,
+  ) = second_branch_summary;
+  let (first_leaf_slot, first_leaf_start, first_leaf_finish) = first_leaf_summary;
+  let (second_leaf_slot, second_leaf_start, second_leaf_before, second_leaf_finish) =
+    second_leaf_summary;
+
+  assert_eq!(trunk_start, 0, "trunk thread must start with zero errno");
+  assert_eq!(
+    first_branch_start, 0,
+    "first branch thread must start with zero errno",
+  );
+  assert_eq!(
+    second_branch_start, 0,
+    "second branch thread must start with zero errno",
+  );
+  assert_eq!(
+    second_branch_before, 0,
+    "second branch must observe zero before first write",
+  );
+  assert_eq!(
+    first_leaf_start, 0,
+    "first leaf thread must start with zero errno",
+  );
+  assert_eq!(
+    second_leaf_start, 0,
+    "second leaf thread must start with zero errno",
+  );
+  assert_eq!(
+    second_leaf_before, 0,
+    "second leaf must observe zero before first write",
+  );
+  assert_eq!(
+    first_leaf_finish, FIRST_LEAF_WRITE,
+    "first leaf thread must preserve its boundary write",
+  );
+  assert_eq!(
+    second_leaf_finish, SECOND_LEAF_WRITE,
+    "second leaf thread must preserve its boundary write",
+  );
+  assert_eq!(
+    first_branch_finish, FIRST_BRANCH_WRITE,
+    "first branch thread must preserve its boundary write",
+  );
+  assert_eq!(
+    second_branch_finish, SECOND_BRANCH_WRITE,
+    "second branch thread must preserve its boundary write",
+  );
+  assert_eq!(
+    trunk_finish, TRUNK_SECOND,
+    "branch and leaf writes must not clobber trunk boundary value",
+  );
+  assert_ne!(
+    trunk_slot, main_slot,
+    "trunk thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    first_branch_slot, main_slot,
+    "first branch thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    second_branch_slot, main_slot,
+    "second branch thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    first_leaf_slot, main_slot,
+    "first leaf thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    second_leaf_slot, main_slot,
+    "second leaf thread must not alias main-thread errno storage",
+  );
+  assert_ne!(
+    first_branch_slot, trunk_slot,
+    "first branch thread must not alias trunk-thread errno storage",
+  );
+  assert_ne!(
+    second_branch_slot, trunk_slot,
+    "second branch thread must not alias trunk-thread errno storage",
+  );
+  assert_ne!(
+    first_leaf_slot, first_branch_slot,
+    "first leaf thread must not alias first-branch errno storage",
+  );
+  assert_ne!(
+    second_leaf_slot, second_branch_slot,
+    "second leaf thread must not alias second-branch errno storage",
+  );
+  assert_eq!(
+    __errno_location() as usize,
+    main_slot,
+    "main-thread errno pointer must remain stable across boundary branch regeneration",
+  );
+  assert_eq!(
+    read_errno(),
+    -9000,
+    "nested boundary writes must not clobber main-thread errno",
+  );
+}

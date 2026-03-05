@@ -581,6 +581,9 @@ fn unknown_child_scenario_fails_without_running_known_handlers() {
 fn atexit_runs_handlers_in_reverse_registration_order() {
   let output = run_child_scenario(SCENARIO_ATEXIT_ORDER);
   let output_context = format_output(&output);
+  let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
+  let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
+  let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let first_count = marker_occurrences(&output.stdout, b"{1}");
   let second_count = marker_occurrences(&output.stdout, b"{2}");
   let third_count = marker_occurrences(&output.stdout, b"{3}");
@@ -601,6 +604,18 @@ fn atexit_runs_handlers_in_reverse_registration_order() {
     output.status.signal(),
     None,
     "atexit order scenario should not terminate due to signal: {output_context}"
+  );
+  assert!(
+    runner_banner_count >= 1,
+    "atexit order scenario should start child test harness before status-preserving termination: {output_context}"
+  );
+  assert_eq!(
+    child_entrypoint_count, 0,
+    "atexit order scenario should terminate before child test completion marker: {output_context}"
+  );
+  assert_eq!(
+    failed_marker_count, 0,
+    "atexit order scenario should terminate before child harness FAILED summary in stdout: {output_context}"
   );
   assert!(
     output.stdout.ends_with(b"{3}{2}{1}"),

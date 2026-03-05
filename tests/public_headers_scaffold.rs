@@ -423,7 +423,13 @@ fn symbol_in_member_access_expression(bytes: &[u8], symbol_start: usize) -> bool
 }
 
 fn prefix_has_ternary_question(prefix: &str) -> bool {
-  prefix.trim_end().ends_with('?')
+  let trimmed = prefix.trim_end();
+
+  if trimmed.ends_with('?') {
+    return true;
+  }
+
+  strip_trailing_prefix_expression_wrappers(trimmed).ends_with('?')
 }
 
 fn strip_trailing_prefix_expression_wrappers(prefix: &str) -> &str {
@@ -1195,6 +1201,10 @@ fn exported_symbol_detection_rejects_statement_context_function_call_text() {
   assert!(!line_declares_exported_symbol("(*obj).getpid();", "getpid"));
   assert!(!line_declares_exported_symbol(
     "ready ? getpid() : 0;",
+    "getpid"
+  ));
+  assert!(!line_declares_exported_symbol(
+    "ready ? (getpid()) : 0;",
     "getpid"
   ));
   assert!(!line_declares_exported_symbol(
