@@ -98,7 +98,6 @@ fn c_float_and_c_double_preserve_infinity_bits() {
   let negative_float_infinity: c_float = f32::NEG_INFINITY;
   let positive_double_infinity: c_double = f64::INFINITY;
   let negative_double_infinity: c_double = f64::NEG_INFINITY;
-
   let positive_float_round_trip: f32 = positive_float_infinity;
   let negative_float_round_trip: f32 = negative_float_infinity;
   let positive_double_round_trip: f64 = positive_double_infinity;

@@ -461,6 +461,32 @@ fn quality_gate_script_full_profile_optional_adapter_run_steps_remain_ordered() 
 }
 
 #[test]
+fn quality_gate_script_full_profile_libc_adapter_root_gate_precedes_dry_run_fallback() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let root_gate = "if [[ -n \"${RLIBC_LIBC_TEST_ROOT:-}\" ]]; then";
+  let profile_run_step = "run_step 900 bash scripts/conformance/libc-test-adapter.sh --profile docs/conformance/libc-test-smoke.txt";
+  let dry_run_step = "run_step 120 bash scripts/conformance/libc-test-adapter.sh --dry-run --profile docs/conformance/libc-test-smoke.txt";
+  let root_gate_index = script.find(root_gate).unwrap_or_else(|| {
+    panic!("full profile must gate libc adapter profile run on env presence: {root_gate}")
+  });
+  let profile_run_step_index = script.find(profile_run_step).unwrap_or_else(|| {
+    panic!("full profile must contain adapter profile run step: {profile_run_step}")
+  });
+  let dry_run_step_index = script.find(dry_run_step).unwrap_or_else(|| {
+    panic!("full profile must contain adapter dry-run fallback step: {dry_run_step}")
+  });
+
+  assert!(
+    root_gate_index < profile_run_step_index,
+    "full profile must evaluate libc-test root gate before adapter profile run step"
+  );
+  assert!(
+    profile_run_step_index < dry_run_step_index,
+    "full profile must keep adapter profile run step before dry-run fallback step"
+  );
+}
+
+#[test]
 fn quality_gate_script_full_profile_gates_ltp_adapter_on_env_and_executable() {
   let script = read_repository_file("scripts/quality-gate.sh");
 
@@ -1118,6 +1144,17 @@ fn quality_gate_script_usage_mentions_duplicate_continue_on_fail_rejection_for_f
   assert!(
     script.contains(required_snippet),
     "usage/continue-on-fail contract must mention duplicate-flag rejection: {required_snippet}"
+  );
+}
+
+#[test]
+fn quality_gate_script_usage_mentions_invalid_option_exit_status() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let required_snippet = "invalid option usage exits with status 2";
+
+  assert!(
+    script.contains(required_snippet),
+    "usage/options contract must mention invalid-option exit status: {required_snippet}"
   );
 }
 
@@ -2014,6 +2051,23 @@ fn command_uses_supported_runtest_prefix_rejects_shell_suffixes_for_dot_runtest_
     assert!(
       !command_uses_supported_runtest_prefix(command),
       "dot-runtest variant with shell suffix must be rejected by manifest contract helper: {command}"
+    );
+  }
+}
+
+#[test]
+fn command_uses_supported_runtest_prefix_rejects_env_expansion_suffixes_for_non_bare_prefixes() {
+  for command in [
+    "./runtest -w functional/$TARGET_CASE",
+    "./runtest -w $(printf functional/argv)",
+    "bin/runtest -w functional/$TARGET_CASE",
+    "bin/runtest -w $(printf functional/argv)",
+    "./bin/runtest -w functional/$TARGET_CASE",
+    "./bin/runtest -w $(printf functional/argv)",
+  ] {
+    assert!(
+      !command_uses_supported_runtest_prefix(command),
+      "env expansion suffix for non-bare runtest prefixes must be rejected by manifest contract helper: {command}"
     );
   }
 }

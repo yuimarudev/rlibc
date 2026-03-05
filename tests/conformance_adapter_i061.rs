@@ -946,6 +946,49 @@ fn adapter_rejects_results_file_separator_token_even_when_later_value_is_valid()
 }
 
 #[test]
+fn adapter_rejects_results_file_separator_token_before_suite_root_even_when_later_value_is_valid_and_before_later_unknown_argument()
+ {
+  let temp_dir = TempDirGuard::new(
+    "i061-results-file-separator-token-before-suite-root-even-when-later-valid-before-unknown",
+  );
+  let suite_root = temp_dir.path().join("suite-root");
+  let results_file = suite_root.join("results/ltp-results.txt");
+  let marker = temp_dir.path().join(
+    "suite-command-ran-separator-token-before-suite-root-even-when-later-valid-before-unknown.marker",
+  );
+
+  write_text(&results_file, "PASS separator.override.case\n");
+
+  let arguments = vec![
+    "--suite".to_string(),
+    "ltp".to_string(),
+    "--results-file".to_string(),
+    "--".to_string(),
+    "--suite-root".to_string(),
+    suite_root.to_string_lossy().into_owned(),
+    "--results-file".to_string(),
+    results_file.to_string_lossy().into_owned(),
+    "--unknown-after-invalid-results-file".to_string(),
+    "--".to_string(),
+    "touch".to_string(),
+    marker.to_string_lossy().into_owned(),
+  ];
+  let output = run_adapter(&arguments);
+  let stderr = stderr_text(&output);
+
+  assert!(!output.status.success());
+  assert!(stderr.contains("--results-file requires a value"));
+  assert!(
+    !stderr.contains("unknown argument"),
+    "missing results-file value error should win over later unknown argument"
+  );
+  assert!(
+    !marker.exists(),
+    "suite command must not run when any --results-file value is missing"
+  );
+}
+
+#[test]
 fn adapter_rejects_results_file_outside_suite_root() {
   let temp_dir = TempDirGuard::new("i061-results-outside-root");
   let suite_root = temp_dir.path().join("suite-root");
@@ -2972,6 +3015,51 @@ fn adapter_rejects_timeout_seconds_separator_token_even_when_later_value_is_vali
   assert!(
     !marker.exists(),
     "suite command must not run when any --timeout-seconds value is missing"
+  );
+}
+
+#[test]
+fn adapter_rejects_timeout_seconds_separator_token_even_when_later_value_is_valid_and_before_later_unknown_argument()
+ {
+  let temp_dir = TempDirGuard::new("i061-timeout-separator-override-before-unknown");
+  let suite_root = temp_dir.path().join("ltp");
+  let marker = temp_dir
+    .path()
+    .join("suite-command-ran-timeout-separator-override-before-unknown.marker");
+
+  fs::create_dir_all(&suite_root).unwrap_or_else(|error| {
+    panic!(
+      "failed to create suite root {}: {error}",
+      suite_root.display()
+    )
+  });
+
+  let arguments = vec![
+    "--suite".to_string(),
+    "ltp".to_string(),
+    "--suite-root".to_string(),
+    suite_root.to_string_lossy().into_owned(),
+    "--timeout-seconds".to_string(),
+    "--".to_string(),
+    "--timeout-seconds".to_string(),
+    "3".to_string(),
+    "--unknown-after-invalid-timeout".to_string(),
+    "--".to_string(),
+    "touch".to_string(),
+    marker.to_string_lossy().into_owned(),
+  ];
+  let output = run_adapter(&arguments);
+  let stderr = stderr_text(&output);
+
+  assert!(!output.status.success());
+  assert!(stderr.contains("--timeout-seconds requires a value"));
+  assert!(
+    !stderr.contains("unknown argument"),
+    "timeout-seconds preflight error should win over later unknown argument"
+  );
+  assert!(
+    !marker.exists(),
+    "suite command must not run when any earlier --timeout-seconds value is missing"
   );
 }
 

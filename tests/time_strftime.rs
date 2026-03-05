@@ -342,6 +342,26 @@ fn strftime_e_alternative_modifier_s_aliases_negative_epoch_seconds() {
 }
 
 #[test]
+fn strftime_e_alternative_modifier_s_matches_timegm_normalization_for_out_of_range_fields() {
+  let mut time_parts = fixture_tm();
+
+  time_parts.tm_mon = 14;
+  time_parts.tm_mday = 0;
+  time_parts.tm_hour = -1;
+  time_parts.tm_min = 61;
+  time_parts.tm_sec = -30;
+
+  let mut timegm_input = time_parts;
+  // SAFETY: `timegm_input` is a valid mutable `tm` pointer.
+  let expected_seconds = unsafe { timegm(core::ptr::from_mut(&mut timegm_input)) };
+  let expected = format!("{expected_seconds}|{expected_seconds}");
+  let (written, output) = run_strftime(b"%Es|%s\0", &time_parts, 64);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected.as_bytes());
+}
+
+#[test]
 fn strftime_e_alternative_modifier_n_and_t_alias_control_tokens() {
   let expected = b"\n|\n|\t|\t";
   let (written, output) = run_strftime(b"%En|%n|%Et|%t\0", &fixture_tm(), 32);
@@ -1734,8 +1754,7 @@ fn strftime_e_alternative_meridiem_and_time_alias_tokens_at_boundaries() {
 
   let midnight_expected = b"AM|AM|am|am|00:04:05|00:04:05";
   let noon_expected = b"PM|PM|pm|pm|12:04:05|12:04:05";
-  let (midnight_written, midnight_output) =
-    run_strftime(b"%Ep|%p|%EP|%P|%ET|%T\0", &midnight, 64);
+  let (midnight_written, midnight_output) = run_strftime(b"%Ep|%p|%EP|%P|%ET|%T\0", &midnight, 64);
   let (noon_written, noon_output) = run_strftime(b"%Ep|%p|%EP|%P|%ET|%T\0", &noon, 64);
 
   assert_eq!(midnight_written, midnight_expected.len());

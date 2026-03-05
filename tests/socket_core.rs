@@ -638,6 +638,47 @@ fn accept_non_socket_fd_with_null_addr_and_non_null_addrlen_returns_minus_one_an
 }
 
 #[test]
+fn accept_non_socket_fd_with_non_null_addr_and_non_null_addrlen_returns_minus_one_and_errno_enotsock()
+ {
+  let file = fs::File::open("/dev/null")
+    .unwrap_or_else(|error| panic!("failed to open /dev/null for test: {error}"));
+  let expected_len = to_socklen(core::mem::size_of::<SockaddrUn>());
+  let mut peer_len = expected_len;
+  let marker = c_char::try_from(b'X').unwrap_or_else(|_| unreachable!("ASCII X fits c_char"));
+  let expected_family =
+    SaFamilyT::try_from(AF_UNIX).unwrap_or_else(|_| unreachable!("AF_UNIX must fit sa_family_t"));
+  let mut peer_address = SockaddrUn {
+    sun_family: expected_family,
+    sun_path: [marker; 108],
+  };
+
+  set_errno(0);
+  // SAFETY: valid non-socket fd with writable peer buffers exercises ENOTSOCK failure contract.
+  let result = unsafe {
+    accept(
+      file.as_raw_fd(),
+      core::ptr::addr_of_mut!(peer_address).cast::<Sockaddr>(),
+      core::ptr::addr_of_mut!(peer_len),
+    )
+  };
+
+  assert_eq!(result, -1);
+  assert_eq!(errno_value(), ENOTSOCK);
+  assert_eq!(
+    peer_len, expected_len,
+    "accept should not modify addrlen on non-socket fd failure"
+  );
+  assert_eq!(
+    peer_address.sun_family, expected_family,
+    "accept should not modify peer family on non-socket fd failure"
+  );
+  assert_eq!(
+    peer_address.sun_path[0], marker,
+    "accept should not modify peer buffer on non-socket fd failure"
+  );
+}
+
+#[test]
 fn accept_on_non_listening_socket_returns_minus_one_and_errno_einval() {
   // SAFETY: arguments follow Linux `socket(2)` contract for AF_UNIX stream sockets.
   let fd = unsafe { socket(AF_UNIX, SOCK_STREAM, 0) };

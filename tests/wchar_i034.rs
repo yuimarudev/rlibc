@@ -1589,6 +1589,41 @@ fn mbsrtowcs_zero_len_does_not_validate_or_advance_src_with_second_reserved_byte
 }
 
 #[test]
+fn mbsrtowcs_zero_len_does_not_validate_or_advance_src_with_stale_state() {
+  let input = b"A\0";
+  let mut src = input.as_ptr().cast::<c_char>();
+  let original = src;
+  let mut state = mbstate_t::new();
+  let mut dst = [0_i32; 2];
+  // bytes=[0xE3, 0, 0, 0], pending_len=0, expected_len=0 (stale bytes snapshot).
+  let stale_state_bytes = [0xE3_u8, 0, 0, 0, 0, 0, 0, 0];
+
+  write_state_bytes(&mut state, stale_state_bytes);
+  set_errno(6565);
+  // SAFETY: pointers are valid; `len == 0` should short-circuit before validating state/input.
+  let first = unsafe { mbsrtowcs(dst.as_mut_ptr(), &raw mut src, sz(0), &raw mut state) };
+
+  assert_eq!(first, sz(0));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 6565);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let second = unsafe {
+    mbsrtowcs(
+      dst.as_mut_ptr(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(second, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(src, original);
+}
+
+#[test]
 fn mbsrtowcs_null_dst_counts_without_advancing_src() {
   let input = b"ab\xF0\x9F\x8D\xA3\0";
   let mut src = input.as_ptr().cast::<c_char>();
@@ -2611,6 +2646,48 @@ fn wcsrtombs_zero_len_does_not_validate_or_advance_src_with_second_reserved_byte
   let after = unsafe { mbsinit(&raw const state) };
 
   assert_eq!(after, 0);
+}
+
+#[test]
+fn wcsrtombs_zero_len_does_not_validate_or_advance_src_with_stale_state() {
+  let input = [i32::from(b'A'), 0_i32];
+  let mut src = input.as_ptr();
+  let original = src;
+  let mut state = mbstate_t::new();
+  let mut dst = [0_u8; 8];
+  // bytes=[0xE3, 0, 0, 0], pending_len=0, expected_len=0 (stale bytes snapshot).
+  let stale_state_bytes = [0xE3_u8, 0, 0, 0, 0, 0, 0, 0];
+
+  write_state_bytes(&mut state, stale_state_bytes);
+  set_errno(7575);
+  // SAFETY: pointers are valid; `len == 0` should short-circuit before validating state/input.
+  let first = unsafe {
+    wcsrtombs(
+      dst.as_mut_ptr().cast::<c_char>(),
+      &raw mut src,
+      sz(0),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, sz(0));
+  assert_eq!(src, original);
+  assert_eq!(errno_value(), 7575);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `input` is NUL-terminated.
+  let second = unsafe {
+    wcsrtombs(
+      dst.as_mut_ptr().cast::<c_char>(),
+      &raw mut src,
+      sz(dst.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(second, size_t::MAX);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(src, original);
 }
 
 #[test]

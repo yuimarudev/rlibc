@@ -3908,6 +3908,7 @@ fn three_level_branch_rounds_keep_zero_start_after_trunk_rewrites() {
       ROUND_SPECS.iter().enumerate()
     {
       write_errno(trunk_round_write);
+
       let trunk_before_branch = read_errno();
       let branch_summary = thread::spawn(move || {
         let branch_slot = __errno_location() as usize;

@@ -12,7 +12,7 @@
 use crate::abi::errno::{
   EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, EBUSY, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST,
   EHOSTUNREACH, EINTR, EINVAL, EISDIR, ENETDOWN, ENETUNREACH, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR,
-  EPIPE, ETIMEDOUT,
+  ENOTEMPTY, EPIPE, ETIMEDOUT,
 };
 use crate::abi::types::{c_char, c_int, c_void};
 use crate::errno::{__errno_location, set_errno};
@@ -442,6 +442,7 @@ const fn io_error_kind_errno(error_kind: io::ErrorKind) -> Option<c_int> {
   match error_kind {
     io::ErrorKind::NotFound => Some(ENOENT),
     io::ErrorKind::NotADirectory => Some(ENOTDIR),
+    io::ErrorKind::DirectoryNotEmpty => Some(ENOTEMPTY),
     io::ErrorKind::ResourceBusy => Some(EBUSY),
     io::ErrorKind::AlreadyExists => Some(EEXIST),
     io::ErrorKind::WouldBlock => Some(EAGAIN),
@@ -714,7 +715,8 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 /// - duplicate-prefix normalization is only applied when `<symbol>` is
 ///   followed by a separator colon (with optional surrounding whitespace).
 /// - duplicate symbol-prefix normalization also accepts optional whitespace
-///   before the host-detail colon (for example `<symbol> : detail`).
+///   before the host-detail colon (for example `<symbol> : detail` or
+///   `<symbol>\t: detail`).
 /// - repeated colons after the symbol prefix are collapsed during
 ///   normalization (for example `<symbol>::detail`).
 /// - colon-collapsing also normalizes whitespace-delimited colon runs (for
@@ -881,6 +883,23 @@ mod tests {
     set_dlsym_missing_symbol_message(
       c"dup_symbol".as_ptr(),
       Some("  dup_symbol: host loader unresolved entry"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(
+      message,
+      "rlibc: requested symbol was not found: dup_symbol: host loader unresolved entry",
+    );
+  }
+
+  #[test]
+  fn set_dlsym_missing_symbol_message_deduplicates_symbol_prefix_with_tab_before_separator() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup_symbol".as_ptr(),
+      Some("dup_symbol\t: host loader unresolved entry"),
     );
 
     let message = take_dlerror_message().expect("expected pending dlerror message");
@@ -1784,6 +1803,28 @@ mod tests {
   }
 
   #[test]
+  fn register_open_handle_with_max_handle_updates_existing_entry_and_cleans_trackable_zero_entry() {
+    let mut registry = DlHandleRegistry::new();
+    let max_handle = usize::MAX as *mut c_void;
+
+    registry.handles.insert(
+      TRACKABLE_NULL_HANDLE_ID,
+      DlHandleState::Open { refcount: 8 },
+    );
+    registry
+      .handles
+      .insert(max_handle as usize, DlHandleState::Open { refcount: 3 });
+
+    registry.register_open_handle(max_handle);
+
+    assert_eq!(registry.handle_state(TRACKABLE_NULL_HANDLE_ID), None);
+    assert_eq!(
+      registry.handle_state(max_handle as usize),
+      Some(DlHandleState::Open { refcount: 4 })
+    );
+  }
+
+  #[test]
   fn register_open_handle_with_max_handle_reopens_closed_entry() {
     let mut registry = DlHandleRegistry::new();
     let max_handle = usize::MAX as *mut c_void;
@@ -2100,10 +2141,7 @@ mod tests {
   fn io_error_errno_maps_directory_not_empty_kind_when_raw_errno_is_absent() {
     let error = io::Error::new(io::ErrorKind::DirectoryNotEmpty, "directory not empty");
 
-    assert_eq!(
-      io_error_errno(&error, ENOENT),
-      crate::abi::errno::ENOTEMPTY
-    );
+    assert_eq!(io_error_errno(&error, ENOENT), crate::abi::errno::ENOTEMPTY);
   }
 
   #[test]

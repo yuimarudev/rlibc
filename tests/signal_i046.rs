@@ -92,6 +92,18 @@ fn raise_negative_signal_returns_minus_one_and_sets_errno() {
 }
 
 #[test]
+fn raise_extreme_negative_signal_returns_minus_one_and_sets_errno() {
+  let _lock = signal_lock();
+
+  write_errno(0);
+
+  let status = raise(c_int::MIN);
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EINVAL);
+}
+
+#[test]
 fn raise_signal_just_above_kernel_range_returns_minus_one_and_sets_errno() {
   let _lock = signal_lock();
 

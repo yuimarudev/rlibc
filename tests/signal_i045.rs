@@ -1039,6 +1039,54 @@ fn sigaction_out_of_range_signal_with_invalid_act_keeps_oldact_unchanged() {
 }
 
 #[test]
+fn sigaction_validation_failure_with_invalid_act_keeps_oldact_unchanged() {
+  let _lock = signal_lock();
+  let dangling = std::ptr::NonNull::<SigAction>::dangling();
+  let invalid_action = dangling.as_ptr().cast_const();
+  let sentinel = SigAction {
+    sa_handler: usize::MAX - 3,
+    sa_flags: SA_RESTART,
+    sa_restorer: usize::MAX - 2,
+    sa_mask: SigSet {
+      bits: [u64::MAX; 16],
+    },
+  };
+
+  for invalid_signum in [0, -1, MAX_KERNEL_SIGNAL + 1] {
+    let mut old_action = sentinel;
+
+    write_errno(0);
+    // SAFETY: invalid/out-of-range `signum` must be rejected before touching
+    // invalid `act` and without mutating writable `oldact`.
+    let invalid_status = unsafe { sigaction(invalid_signum, invalid_action, &raw mut old_action) };
+
+    assert_eq!(invalid_status, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(
+      old_action, sentinel,
+      "invalid/out-of-range signum={invalid_signum} must keep oldact unchanged with invalid act",
+    );
+  }
+
+  for reserved_signum in [SIGKILL, SIGSTOP] {
+    let mut old_action = sentinel;
+
+    write_errno(0);
+    // SAFETY: reserved `signum` must be rejected before touching invalid `act`
+    // and without mutating writable `oldact`.
+    let reserved_status =
+      unsafe { sigaction(reserved_signum, invalid_action, &raw mut old_action) };
+
+    assert_eq!(reserved_status, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(
+      old_action, sentinel,
+      "reserved signum={reserved_signum} must keep oldact unchanged with invalid act",
+    );
+  }
+}
+
+#[test]
 fn sigaction_query_with_invalid_oldact_pointer_reports_efault() {
   let _lock = signal_lock();
   let dangling = std::ptr::NonNull::<SigAction>::dangling();

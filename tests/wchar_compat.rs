@@ -1728,7 +1728,8 @@ fn wctomb_null_reset_with_valid_wc_after_null_output_pending_allows_fresh_mbtowc
 }
 
 #[test]
-fn wctomb_null_reset_with_valid_wc_after_null_output_pending_discards_state_for_mblen_suffix_decode() {
+fn wctomb_null_reset_with_valid_wc_after_null_output_pending_discards_state_for_mblen_suffix_decode()
+ {
   let prefix = [0xE3_u8, 0x81_u8];
   let suffix = [0x82_u8, 0_u8];
 

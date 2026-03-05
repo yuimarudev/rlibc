@@ -570,6 +570,19 @@ fn toascii_matches_rem_euclid_projection_for_dense_signed_range() {
 }
 
 #[test]
+fn toascii_is_invariant_under_bit7_toggle_for_dense_signed_range() {
+  for probe in -4096..=4096 {
+    let toggled = probe ^ 0x80;
+
+    assert_eq!(
+      toascii(toggled),
+      toascii(probe),
+      "toascii bit7-toggle invariance mismatch for probe={probe}, toggled={toggled}"
+    );
+  }
+}
+
+#[test]
 fn isascii_and_toascii_do_not_modify_errno() {
   let sentinels = [0, 17, 913, c_int::MAX];
   let boundary_probes = [c_int::MIN, -4096, -2, EOF_C_INT, 256, 4096, c_int::MAX];

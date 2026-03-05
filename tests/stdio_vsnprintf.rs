@@ -934,6 +934,34 @@ fn count_conversion_jn_and_tn_include_escaped_percent_with_zero_capacity_non_nul
 }
 
 #[test]
+fn count_conversion_n_and_zn_include_escaped_percent_with_zero_capacity_non_null_buffer() {
+  let mut buffer = [b'Q'; 6];
+  let mut first_count_n: c_int = -1;
+  let mut second_count_z: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(first_count_n).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(second_count_z).cast_const()),
+  ]);
+
+  set_errno(0);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(0),
+      as_format_ptr(b"A%%B%nC%%D%zn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 6);
+  assert_eq!(first_count_n, 3);
+  assert_eq!(second_count_z, 6);
+  assert_eq!(buffer, [b'Q'; 6]);
+  assert_eq!(read_errno(), 0);
+}
+
+#[test]
 fn count_conversion_ln_writes_emitted_length_with_zero_capacity_non_null_buffer() {
   let mut buffer = [b'Q'; 4];
   let mut count_l: i64 = -1;

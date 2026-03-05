@@ -579,6 +579,62 @@ fn repeated_valid_entries_with_mixed_skips_support_distinct_init_and_fini_ranges
 }
 
 #[test]
+fn repeated_valid_entries_with_consecutive_mixed_invalid_groups_support_distinct_ranges() {
+  let _test_guard = lock_test();
+
+  reset_log();
+
+  let entry_align = core::mem::align_of::<InitFiniFn>();
+
+  if entry_align == 1 {
+    return;
+  }
+
+  let init_entries: [usize; 11] = [
+    0,
+    1,
+    first as *const () as usize,
+    0,
+    1,
+    first as *const () as usize,
+    1,
+    0,
+    third as *const () as usize,
+    0,
+    1,
+  ];
+  let fini_entries: [usize; 11] = [
+    1,
+    0,
+    third as *const () as usize,
+    0,
+    1,
+    second as *const () as usize,
+    1,
+    0,
+    second as *const () as usize,
+    0,
+    1,
+  ];
+  let init_start = init_entries.as_ptr().cast::<InitFiniFn>();
+  // SAFETY: `init_start` points to contiguous pointer-sized entries.
+  let init_end = unsafe { init_start.add(init_entries.len()) };
+  let fini_start = fini_entries.as_ptr().cast::<InitFiniFn>();
+  // SAFETY: `fini_start` points to contiguous pointer-sized entries.
+  let fini_end = unsafe { fini_start.add(fini_entries.len()) };
+
+  // SAFETY: range shapes are valid; clustered null and misaligned non-null
+  // groups should be skipped while preserving each distinct range's repeated
+  // valid entry sequence.
+  unsafe {
+    run_init_array_range(init_start, init_end);
+    run_fini_array_range(fini_start, fini_end);
+  }
+
+  assert_eq!(snapshot_log(), vec![1, 1, 3, 2, 2, 3]);
+}
+
+#[test]
 fn valid_init_with_partially_null_fini_only_runs_init_handlers() {
   let _test_guard = lock_test();
 

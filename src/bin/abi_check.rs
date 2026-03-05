@@ -972,6 +972,15 @@ mod tests {
   }
 
   #[test]
+  fn parse_cli_options_rejects_whitespace_suffixed_option_like_golden_equals_value() {
+    let args = vec!["--golden=--bogus ".to_string()];
+    let error = parse_cli_options(&args)
+      .expect_err("whitespace-suffixed option-like equals-style value must fail");
+
+    assert!(error.contains("missing value for --golden"));
+  }
+
+  #[test]
   fn parse_cli_options_accepts_help_like_golden_equals_value() {
     let args = vec!["--golden=--help".to_string()];
     let actual = parse_cli_options(&args).expect("help-like equals-style value must parse");

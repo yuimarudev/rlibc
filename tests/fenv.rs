@@ -2,10 +2,10 @@ use core::mem::{align_of, size_of};
 use rlibc::abi::types::c_int;
 use rlibc::errno::__errno_location;
 use rlibc::fenv::{
-  feclearexcept, fegetenv, fegetexceptflag, fegetround, feholdexcept, fenv_t, feraiseexcept,
-  fesetenv, fesetexceptflag, fesetround, fetestexcept, feupdateenv, fexcept_t, FE_ALL_EXCEPT,
-  FE_DFL_ENV, FE_DIVBYZERO, FE_DOWNWARD, FE_INEXACT, FE_INVALID, FE_OVERFLOW, FE_TONEAREST,
-  FE_TOWARDZERO, FE_UNDERFLOW, FE_UPWARD,
+  FE_ALL_EXCEPT, FE_DFL_ENV, FE_DIVBYZERO, FE_DOWNWARD, FE_INEXACT, FE_INVALID, FE_OVERFLOW,
+  FE_TONEAREST, FE_TOWARDZERO, FE_UNDERFLOW, FE_UPWARD, feclearexcept, fegetenv, fegetexceptflag,
+  fegetround, feholdexcept, fenv_t, feraiseexcept, fesetenv, fesetexceptflag, fesetround,
+  fetestexcept, feupdateenv, fexcept_t,
 };
 use std::thread;
 

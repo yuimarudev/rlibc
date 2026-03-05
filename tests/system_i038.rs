@@ -776,6 +776,33 @@ fn sysinfo_success_preserves_enametoolong_from_gethostname_zero_length_failure()
 }
 
 #[test]
+fn sysinfo_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure() {
+  write_errno(0);
+
+  let failed = unsafe { gethostname(core::ptr::null_mut(), 0 as size_t) };
+
+  assert_eq!(failed, -1);
+  assert_eq!(read_errno(), ENAMETOOLONG);
+
+  // SAFETY: zero is valid for this C struct because all fields are integer scalars.
+  let mut first_info: SysInfo = unsafe { mem::zeroed() };
+  // SAFETY: zero is valid for this C struct because all fields are integer scalars.
+  let mut second_info: SysInfo = unsafe { mem::zeroed() };
+
+  let first = unsafe { sysinfo(&raw mut first_info) };
+  let first_errno = read_errno();
+  let second = unsafe { sysinfo(&raw mut second_info) };
+  let second_errno = read_errno();
+
+  assert_eq!(first, 0);
+  assert_eq!(second, 0);
+  assert_eq!(first_errno, ENAMETOOLONG);
+  assert_eq!(second_errno, ENAMETOOLONG);
+  assert!(first_info.mem_unit > 0);
+  assert!(second_info.mem_unit > 0);
+}
+
+#[test]
 fn sysinfo_success_preserves_efault_from_uname_failure() {
   write_errno(0);
 
