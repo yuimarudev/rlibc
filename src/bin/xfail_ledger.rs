@@ -1792,6 +1792,37 @@ libc-test,math/pow,x86_64-unknown-linux-gnu,flaky
   }
 
   #[test]
+  fn parse_args_reports_offending_token_for_split_style_strict_xpass_value() {
+    let args = vec![
+      "--results=/tmp/results.csv".to_string(),
+      "--strict-xpass".to_string(),
+      "unexpected".to_string(),
+    ];
+    let error =
+      parse_args(&args).expect_err("split-style strict-xpass value must report offending token");
+
+    assert!(error.contains("--strict-xpass"));
+    assert!(error.contains("does not take a value"));
+    assert!(error.contains("unexpected"));
+  }
+
+  #[test]
+  fn parse_args_reports_empty_reason_for_separator_style_strict_xpass_value() {
+    let args = vec![
+      "--results=/tmp/results.csv".to_string(),
+      "--strict-xpass".to_string(),
+      "--".to_string(),
+      String::new(),
+    ];
+    let error = parse_args(&args)
+      .expect_err("separator-style strict-xpass empty value must report explicit reason");
+
+    assert!(error.contains("--strict-xpass"));
+    assert!(error.contains("does not take a value"));
+    assert!(error.contains("empty value is not allowed"));
+  }
+
+  #[test]
   fn parse_args_rejects_separator_style_strict_xpass_value_with_explicit_error() {
     let args = vec![
       "--results=/tmp/results.csv".to_string(),

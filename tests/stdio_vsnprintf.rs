@@ -1142,6 +1142,32 @@ fn count_conversion_tn_writes_required_length_with_null_buffer_and_zero_capacity
 }
 
 #[test]
+fn count_conversion_n_and_zn_include_escaped_percent_with_null_buffer_and_zero_capacity() {
+  let mut first_count_n: c_int = -1;
+  let mut second_count_z: isize = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(first_count_n).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(second_count_z).cast_const()),
+  ]);
+
+  set_errno(0);
+  // SAFETY: `n == 0` allows null output buffer; pointers in `ap` follow SysV `va_list`.
+  let result = unsafe {
+    vsnprintf(
+      core::ptr::null_mut(),
+      as_size_t(0),
+      as_format_ptr(b"A%%B%nC%%D%zn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 6);
+  assert_eq!(first_count_n, 3);
+  assert_eq!(second_count_z, 6);
+  assert_eq!(read_errno(), 0);
+}
+
+#[test]
 fn count_conversion_uses_required_length_under_truncation() {
   let mut buffer = [0_u8; 4];
   let mut count: c_int = -1;
@@ -1942,6 +1968,34 @@ fn count_conversion_later_dangling_percent_with_ln_and_lln_keeps_prior_successfu
   assert_eq!(&buffer[..4], b"abC\0");
   assert_eq!(first_count_l, 2);
   assert_eq!(second_count_ll, 3);
+}
+
+#[test]
+fn count_conversion_later_dangling_percent_with_hn_and_hhn_keeps_prior_successful_writes() {
+  let mut buffer = [b'Q'; 16];
+  let mut short_count: i16 = -1;
+  let mut byte_count: i8 = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(short_count).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(byte_count).cast_const()),
+  ]);
+
+  set_errno(0);
+  // SAFETY: `%hn`/`%hhn` pointers are valid; trailing `%` intentionally triggers format error after both writes.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"ab%hnC%hhn%\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(&buffer[..4], b"abC\0");
+  assert_eq!(short_count, 2);
+  assert_eq!(byte_count, 3);
 }
 
 #[test]

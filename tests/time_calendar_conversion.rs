@@ -2925,6 +2925,135 @@ fn mktime_large_negative_tm_isdst_day_carry_boundary_keeps_errno_thread_local_ac
 }
 
 #[test]
+fn mktime_large_negative_tm_isdst_matches_minus_one_for_month_borrow_boundary_at_tm_year_minimum() {
+  let seed = tm {
+    tm_sec: 0,
+    tm_min: 0,
+    tm_hour: 0,
+    tm_mday: 1,
+    tm_mon: -1,
+    tm_year: c_int::MIN,
+    tm_wday: -1,
+    tm_yday: -1,
+    tm_isdst: -1,
+    tm_gmtoff: 17,
+    tm_zone: ptr::dangling(),
+  };
+  let mut isdst_unknown = seed;
+  let mut isdst_large_negative = tm {
+    tm_isdst: -7,
+    ..seed
+  };
+
+  write_errno(640);
+  // SAFETY: pointer is valid for the duration of the call.
+  let unknown_result = unsafe { mktime(&raw mut isdst_unknown) };
+  let unknown_errno = read_errno();
+
+  write_errno(641);
+  // SAFETY: pointer is valid for the duration of the call.
+  let large_negative_result = unsafe { mktime(&raw mut isdst_large_negative) };
+  let large_negative_errno = read_errno();
+
+  assert_eq!(large_negative_result, unknown_result);
+  if unknown_result == -1 {
+    assert_eq!(unknown_errno, ERANGE);
+    assert_eq!(large_negative_errno, ERANGE);
+    assert_eq!(isdst_unknown, seed);
+    assert_eq!(isdst_large_negative.tm_sec, seed.tm_sec);
+    assert_eq!(isdst_large_negative.tm_min, seed.tm_min);
+    assert_eq!(isdst_large_negative.tm_hour, seed.tm_hour);
+    assert_eq!(isdst_large_negative.tm_mday, seed.tm_mday);
+    assert_eq!(isdst_large_negative.tm_mon, seed.tm_mon);
+    assert_eq!(isdst_large_negative.tm_year, seed.tm_year);
+    assert_eq!(isdst_large_negative.tm_wday, seed.tm_wday);
+    assert_eq!(isdst_large_negative.tm_yday, seed.tm_yday);
+    assert_eq!(isdst_large_negative.tm_isdst, -7);
+    assert_eq!(isdst_large_negative.tm_gmtoff, seed.tm_gmtoff);
+    assert_eq!(isdst_large_negative.tm_zone, seed.tm_zone);
+  } else {
+    assert_eq!(unknown_errno, 640);
+    assert_eq!(large_negative_errno, 641);
+    assert_normalized_calendar_metadata(&isdst_large_negative);
+    assert_utc_baseline_output_fields(&isdst_large_negative);
+    assert_eq!(isdst_large_negative, isdst_unknown);
+  }
+}
+
+#[test]
+fn mktime_large_negative_tm_isdst_month_borrow_boundary_keeps_errno_thread_local_across_threads() {
+  write_errno(981);
+
+  let (child_reference_result, child_errno) = std::thread::spawn(|| {
+    let seed = tm {
+      tm_sec: 0,
+      tm_min: 0,
+      tm_hour: 0,
+      tm_mday: 1,
+      tm_mon: -1,
+      tm_year: c_int::MIN,
+      tm_wday: -1,
+      tm_yday: -1,
+      tm_isdst: -1,
+      tm_gmtoff: 42,
+      tm_zone: ptr::dangling(),
+    };
+    let mut unknown = seed;
+    let mut value = tm {
+      tm_isdst: -7,
+      ..seed
+    };
+
+    write_errno(805);
+
+    // SAFETY: pointer is valid for the duration of the call.
+    let unknown_result = unsafe { mktime(&raw mut unknown) };
+    let unknown_errno = read_errno();
+
+    write_errno(806);
+
+    // SAFETY: pointer is valid for the duration of the call.
+    let result = unsafe { mktime(&raw mut value) };
+    let result_errno = read_errno();
+
+    assert_eq!(result, unknown_result);
+    if unknown_result == -1 {
+      assert_eq!(unknown_errno, ERANGE);
+      assert_eq!(result_errno, ERANGE);
+      assert_eq!(unknown, seed);
+      assert_eq!(value.tm_sec, seed.tm_sec);
+      assert_eq!(value.tm_min, seed.tm_min);
+      assert_eq!(value.tm_hour, seed.tm_hour);
+      assert_eq!(value.tm_mday, seed.tm_mday);
+      assert_eq!(value.tm_mon, seed.tm_mon);
+      assert_eq!(value.tm_year, seed.tm_year);
+      assert_eq!(value.tm_wday, seed.tm_wday);
+      assert_eq!(value.tm_yday, seed.tm_yday);
+      assert_eq!(value.tm_isdst, -7);
+      assert_eq!(value.tm_gmtoff, seed.tm_gmtoff);
+      assert_eq!(value.tm_zone, seed.tm_zone);
+    } else {
+      assert_eq!(unknown_errno, 805);
+      assert_eq!(result_errno, 806);
+      assert_normalized_calendar_metadata(&value);
+      assert_utc_baseline_output_fields(&value);
+      assert_eq!(value, unknown);
+    }
+
+    (unknown_result, result_errno)
+  })
+  .join()
+  .expect("child thread should not panic");
+
+  if child_reference_result == -1 {
+    assert_eq!(child_errno, ERANGE);
+  } else {
+    assert_eq!(child_errno, 806);
+  }
+  assert_eq!(read_errno(), 981);
+}
+
+#[test]
 fn mktime_large_negative_tm_isdst_matches_minus_one_for_month_carry_boundary_at_tm_year_maximum() {
   let seed = tm {
     tm_sec: 0,

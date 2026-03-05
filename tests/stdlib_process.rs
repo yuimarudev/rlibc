@@ -506,6 +506,7 @@ fn atexit_registration_limit_failure_exits_without_running_handlers() {
 fn unknown_child_scenario_fails_without_running_known_handlers() {
   let output = run_child_scenario(SCENARIO_UNKNOWN);
   let output_context = format_output(&output);
+  let runner_banner_count = marker_occurrences(&output.stdout, b"running 1 test");
   let child_entrypoint_count = marker_occurrences(&output.stdout, PROCESS_CHILD_ENTRYPOINT_TOKEN);
   let failed_marker_count = marker_occurrences(&output.stdout, FAILED_OUTPUT_TOKEN);
   let handler_marker_count = marker_occurrences(&output.stdout, b"{1}")
@@ -562,6 +563,10 @@ fn unknown_child_scenario_fails_without_running_known_handlers() {
     output.status.signal(),
     None,
     "unknown child scenario should not terminate due to signal: {output_context}"
+  );
+  assert!(
+    runner_banner_count >= 1,
+    "unknown child scenario should start child test harness before panic is reported: {output_context}"
   );
   assert!(
     child_entrypoint_count >= 1,

@@ -1215,6 +1215,50 @@ fn pthread_rwlock_failed_trywrlock_while_reader_held_still_allows_reader_reacqui
 }
 
 #[test]
+fn pthread_rwlock_failed_trywrlock_while_reader_held_still_allows_other_reader_thread() {
+  let mut rwlock = new_rwlock();
+
+  init_rwlock(&mut rwlock);
+
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+  let rwlock_addr = rwlock_ptr.addr();
+  let (result_tx, result_rx) = mpsc::channel::<c_int>();
+
+  // SAFETY: `rwlock_ptr` points to initialized lock storage.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+
+  for _ in 0..3 {
+    // SAFETY: writer try-reentry while current thread holds read ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+  }
+
+  let reader = thread::spawn(move || {
+    let rwlock_ptr = rwlock_addr as *mut pthread_rwlock_t;
+    // SAFETY: pointer is derived from a live lock object for the duration of this test.
+    let try_result = unsafe { pthread_rwlock_tryrdlock(rwlock_ptr) };
+
+    if try_result == 0 {
+      // SAFETY: current thread acquired a read lock via `pthread_rwlock_tryrdlock`.
+      assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+    }
+
+    result_tx
+      .send(try_result)
+      .expect("failed to send reader tryrdlock result");
+  });
+  let try_result = result_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("failed to receive reader tryrdlock result");
+
+  assert_eq!(try_result, 0);
+  reader.join().expect("reader thread panicked");
+  // SAFETY: release main-thread read lock.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: lock is initialized and unlocked.
+  assert_eq!(unsafe { pthread_rwlock_destroy(rwlock_ptr) }, 0);
+}
+
+#[test]
 fn pthread_rwlock_tryrdlock_returns_ebusy_for_same_thread_writer_reentry() {
   let mut rwlock = new_rwlock();
 

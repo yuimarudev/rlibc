@@ -2821,6 +2821,62 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_unset_lang_preserves_
 }
 
 #[test]
+fn setlocale_empty_lc_all_with_empty_category_variable_and_empty_lang_preserves_errno() {
+  let _env_lock = lock_locale_environment();
+  let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
+
+  for (index, &(_, variable)) in CATEGORY_VARIABLES.iter().enumerate() {
+    clear_locale_environment();
+    set_locale_environment("LC_ALL", "");
+
+    for &(_, category_variable) in &CATEGORY_VARIABLES {
+      set_locale_environment(category_variable, "POSIX");
+    }
+
+    set_locale_environment(variable, "");
+    set_locale_environment("LANG", "");
+
+    let expected_errno = 5100 + index as c_int;
+
+    write_errno(expected_errno);
+
+    // SAFETY: argument points to a valid NUL-terminated locale string (`""`).
+    let locale_ptr = unsafe { setlocale(LC_ALL, as_c_ptr(b"\0")) };
+
+    assert!(
+      !locale_ptr.is_null(),
+      "LC_ALL empty locale should resolve when {variable} and LANG are empty",
+    );
+    assert_eq!(locale_name(locale_ptr), b"C");
+    assert_eq!(read_errno(), expected_errno);
+  }
+}
+
+#[test]
+fn setlocale_empty_lc_all_with_all_category_variables_empty_and_supported_lang_preserves_errno() {
+  let _env_lock = lock_locale_environment();
+  let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
+
+  clear_locale_environment();
+  set_locale_environment("LC_ALL", "");
+
+  for &(_, variable) in &CATEGORY_VARIABLES {
+    set_locale_environment(variable, "");
+  }
+
+  set_locale_environment("LANG", "POSIX");
+
+  write_errno(5206);
+
+  // SAFETY: argument points to a valid NUL-terminated locale string (`""`).
+  let locale_ptr = unsafe { setlocale(LC_ALL, as_c_ptr(b"\0")) };
+
+  assert!(!locale_ptr.is_null());
+  assert_eq!(locale_name(locale_ptr), b"C");
+  assert_eq!(read_errno(), 5206);
+}
+
+#[test]
 fn setlocale_empty_category_locale_prefers_category_variable_and_preserves_errno() {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);

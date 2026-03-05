@@ -3683,6 +3683,58 @@ fn fprintf_percent_lln_zero_prefix_success_does_not_clobber_errno() {
 }
 
 #[test]
+fn fprintf_percent_ln_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%ln");
+  let mut count: c_long = -1;
+  let sentinel_errno = 1234_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: variadic arguments match `%ln` contract (`long*`).
+  let written = unsafe { fprintf(stream, format.as_ptr(), core::ptr::addr_of_mut!(count)) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
+fn fprintf_percent_lln_zero_prefix_success_does_not_clobber_errno() {
+  let format = c_string("%lln");
+  let mut count: c_longlong = -1;
+  let sentinel_errno = 1234_i32;
+
+  // SAFETY: `tmpfile` returns a stream managed by host libc.
+  let stream = unsafe { tmpfile() };
+
+  assert!(!stream.is_null());
+
+  write_errno(sentinel_errno);
+
+  // SAFETY: variadic arguments match `%lln` contract (`long long*`).
+  let written = unsafe { fprintf(stream, format.as_ptr(), core::ptr::addr_of_mut!(count)) };
+
+  assert_eq!(written, 0);
+  assert_eq!(count, 0);
+  assert_eq!(read_errno(), sentinel_errno);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_result = unsafe { fclose(stream) };
+
+  assert_eq!(close_result, 0);
+}
+
+#[test]
 fn fprintf_percent_ln_success_does_not_clobber_errno() {
   let format = c_string("%s%ln");
   let payload = c_string("abc");

@@ -1489,6 +1489,44 @@ fn getnameinfo_allows_service_only_request_with_name_required_flag() {
 }
 
 #[test]
+fn getnameinfo_allows_service_only_request_with_name_required_and_numerichost_flags() {
+  let address = sockaddr_in {
+    sin_family: af_inet_family(),
+    sin_port: 5353_u16.to_be(),
+    sin_addr: in_addr {
+      s_addr: u32::from_be_bytes([127, 0, 0, 1]),
+    },
+    sin_zero: [0; 8],
+  };
+  let mut service = [0_i8; 32];
+
+  // SAFETY: pointers refer to valid address/service buffers; host output is
+  // intentionally not requested and NI_NUMERICHOST must not affect service-only
+  // numeric formatting.
+  let status = unsafe {
+    getnameinfo(
+      (&raw const address).cast::<sockaddr>(),
+      slen(size_of::<sockaddr_in>()),
+      core::ptr::null_mut(),
+      slen(0),
+      service.as_mut_ptr(),
+      slen(service.len()),
+      NI_NAMEREQD | NI_NUMERICHOST,
+    )
+  };
+
+  assert_eq!(status, 0);
+
+  // SAFETY: successful getnameinfo writes a terminating NUL to service.
+  let service_text = unsafe { CStr::from_ptr(service.as_ptr()) };
+
+  assert_eq!(
+    service_text.to_str().expect("service output must be UTF-8"),
+    "5353"
+  );
+}
+
+#[test]
 fn getnameinfo_ignores_hostlen_when_host_output_is_not_requested() {
   let address = sockaddr_in {
     sin_family: af_inet_family(),

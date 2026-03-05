@@ -2115,6 +2115,34 @@ fn memcpy_zero_length_allows_mixed_live_and_dangling_pointers() {
 }
 
 #[test]
+fn memcpy_zero_length_allows_mixed_live_and_dangling_with_distinct_alignments() {
+  let mut destination_words = [31_u16, 32, 33];
+  let live_destination = destination_words.as_mut_ptr().wrapping_add(1).cast::<u8>();
+  let live_source_words = [41_u32, 42, 43];
+  let live_source = live_source_words.as_ptr().wrapping_add(1).cast::<u8>();
+  let dangling_destination = core::ptr::NonNull::<u32>::dangling().as_ptr().cast::<u8>();
+  let dangling_source = core::ptr::NonNull::<u16>::dangling().as_ptr().cast::<u8>();
+  let destination_before = destination_words;
+  // SAFETY: `n == 0`, so pointers are never dereferenced.
+  let returned_with_dangling_source = unsafe {
+    memcpy(
+      live_destination.cast(),
+      dangling_source.cast_const().cast(),
+      sz(0),
+    )
+  }
+  .cast::<u8>();
+  // SAFETY: `n == 0`, so pointers are never dereferenced.
+  let returned_with_dangling_destination =
+    unsafe { memcpy(dangling_destination.cast(), live_source.cast(), sz(0)) }.cast::<u8>();
+
+  assert_eq!(returned_with_dangling_source, live_destination);
+  assert_eq!(returned_with_dangling_destination, dangling_destination);
+  assert_eq!(destination_words, destination_before);
+  assert_eq!(live_source_words, [41_u32, 42, 43]);
+}
+
+#[test]
 fn memcpy_same_source_and_destination_is_noop() {
   let mut buffer = [3_u8, 4, 5, 6];
   let pointer = buffer.as_mut_ptr();

@@ -3,10 +3,10 @@
 use core::ffi::{c_char, c_void};
 use rlibc::abi::errno::{EFAULT, EINVAL, ENAMETOOLONG};
 use rlibc::abi::types::{c_int, c_long, size_t};
-use rlibc::resource::{getrlimit, setrlimit, RLimit, RLIMIT_NOFILE, RLIM_INFINITY};
+use rlibc::resource::{RLIM_INFINITY, RLIMIT_NOFILE, RLimit, getrlimit, setrlimit};
 use rlibc::system::{
-  gethostname, getpagesize, sysconf, _SC_CLK_TCK, _SC_NPROCESSORS_CONF, _SC_NPROCESSORS_ONLN,
-  _SC_OPEN_MAX, _SC_PAGESIZE, _SC_PAGE_SIZE,
+  _SC_CLK_TCK, _SC_NPROCESSORS_CONF, _SC_NPROCESSORS_ONLN, _SC_OPEN_MAX, _SC_PAGE_SIZE,
+  _SC_PAGESIZE, gethostname, getpagesize, sysconf,
 };
 
 const EXPECTED_SC_CLK_TCK: c_int = 2;
@@ -780,8 +780,8 @@ fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_errno_after_prior
 }
 
 #[test]
-fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure(
-) {
+fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure()
+ {
   let mut original = RLimit {
     rlim_cur: 0,
     rlim_max: 0,
@@ -833,8 +833,8 @@ fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_enametoolong_from
 }
 
 #[test]
-fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_failure(
-) {
+fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_failure()
+ {
   let mut original = RLimit {
     rlim_cur: 0,
     rlim_max: 0,
@@ -1027,8 +1027,8 @@ fn sysconf_open_max_zero_soft_limit_preserves_efault_from_gethostname_null_failu
 }
 
 #[test]
-fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_efault_from_gethostname_null_failure(
-) {
+fn sysconf_open_max_zero_soft_limit_repeated_success_preserves_efault_from_gethostname_null_failure()
+ {
   let mut original = RLimit {
     rlim_cur: 0,
     rlim_max: 0,
@@ -1221,8 +1221,8 @@ fn sysconf_open_max_one_soft_limit_repeated_success_keeps_value_and_errno() {
 }
 
 #[test]
-fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_failure(
-) {
+fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_failure()
+ {
   let mut original = RLimit {
     rlim_cur: 0,
     rlim_max: 0,
@@ -1281,8 +1281,8 @@ fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_
 }
 
 #[test]
-fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure(
-) {
+fn sysconf_open_max_one_soft_limit_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure()
+ {
   let mut original = RLimit {
     rlim_cur: 0,
     rlim_max: 0,

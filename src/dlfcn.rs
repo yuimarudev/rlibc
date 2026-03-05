@@ -705,6 +705,8 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 ///   and append host-loader detail text when available.
 /// - empty symbol names are rendered as `<empty symbol>` in diagnostics and
 ///   use a canonical message without a host-detail suffix.
+/// - leading/trailing whitespace in host detail is trimmed before duplicate
+///   symbol-prefix normalization.
 /// - when host detail already starts with `<symbol>:`, that duplicate symbol
 ///   prefix is normalized away in the final diagnostic.
 /// - duplicate-prefix normalization is only applied when `<symbol>` is
@@ -984,6 +986,20 @@ mod tests {
     set_dlsym_missing_symbol_message(
       c"dup_symbol".as_ptr(),
       Some("dup_symbol: dup_symbol: dup_symbol"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(message, "rlibc: requested symbol was not found: dup_symbol");
+  }
+
+  #[test]
+  fn set_dlsym_missing_symbol_message_omits_detail_after_spaced_prefix_chain_collapse() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup_symbol".as_ptr(),
+      Some("  dup_symbol : dup_symbol :   "),
     );
 
     let message = take_dlerror_message().expect("expected pending dlerror message");
@@ -2048,8 +2064,8 @@ mod tests {
   }
 
   #[test]
-  fn io_error_errno_maps_in_progress_kind_when_raw_errno_is_absent() {
-    let error = io::Error::new(io::ErrorKind::InProgress, "in progress");
+  fn io_error_errno_preserves_einprogress_raw_errno_when_present() {
+    let error = io::Error::from_raw_os_error(crate::abi::errno::EINPROGRESS);
 
     assert_eq!(
       io_error_errno(&error, ENOENT),

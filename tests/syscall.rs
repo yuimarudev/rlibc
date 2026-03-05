@@ -383,6 +383,14 @@ fn syscall5_large_negative_number_returns_enosys() {
 }
 
 #[test]
+fn syscall5_far_negative_number_returns_enosys() {
+  // SAFETY: invalid far negative syscall number does not require valid pointer arguments.
+  let raw = unsafe { syscall5(-5000, 0, 0, 0, 0, 0) };
+
+  assert_eq!(decode(raw), Err(ENOSYS));
+}
+
+#[test]
 fn syscall5_errno_window_upper_bound_number_returns_enosys() {
   // SAFETY: invalid negative syscall number does not require valid pointer arguments.
   let raw = unsafe { syscall5(-4095, 0, 0, 0, 0, 0) };

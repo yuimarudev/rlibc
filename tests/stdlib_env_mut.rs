@@ -1311,6 +1311,23 @@ fn putenv_invalid_name_preserves_existing_alias_and_sets_errno() {
 }
 
 #[test]
+fn putenv_invalid_name_without_existing_alias_sets_errno_and_keeps_absent() {
+  let _env = EnvScope::new();
+  let missing_name = c_string("RLIBC_I017_PUTENV_INVALID_NO_ALIAS");
+  let mut invalid_entry = b"=broken\0".to_vec();
+
+  assert_eq!(getenv_bytes(&missing_name), None);
+  write_errno(38);
+
+  // SAFETY: `invalid_entry` is mutable and NUL-terminated for C.
+  let invalid_result = unsafe { putenv(invalid_entry.as_mut_ptr().cast()) };
+
+  assert_eq!(invalid_result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(getenv_bytes(&missing_name), None);
+}
+
+#[test]
 fn putenv_empty_string_preserves_existing_alias_and_sets_errno() {
   let _env = EnvScope::new();
   let tracked_name = c_string("RLIBC_I017_PUTENV_EMPTY_ALIAS");

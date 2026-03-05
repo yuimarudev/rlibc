@@ -1559,10 +1559,7 @@ fn getaddrinfo_resolves_domain_service_name_without_ai_numericserv_with_null_nod
     assert_eq!(first.ai_socktype, SOCK_DGRAM);
     assert_eq!(first.ai_protocol, IPPROTO_UDP);
     assert_eq!(u16::from_be(first_addr.sin_port), 53);
-    assert_eq!(
-      first_addr.sin_addr.s_addr.to_be(),
-      u32::from_be_bytes([127, 0, 0, 1])
-    );
+    assert_eq!(first_addr.sin_addr.s_addr.to_be_bytes(), [127, 0, 0, 1]);
   }
 
   // SAFETY: `result` is owned by this test after successful `getaddrinfo`.

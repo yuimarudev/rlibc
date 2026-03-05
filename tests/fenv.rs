@@ -491,6 +491,22 @@ fn fegetenv_rejects_null_pointer_without_mutating_state() {
 }
 
 #[test]
+fn fegetenv_null_pointer_rejection_preserves_errno() {
+  reset_fenv_state();
+  write_errno(57);
+
+  assert_eq!(fesetround(FE_UPWARD), 0);
+  assert_eq!(feraiseexcept(FE_OVERFLOW), 0);
+  // SAFETY: passing a null pointer is intentional for contract validation.
+  assert_ne!(unsafe { fegetenv(core::ptr::null_mut()) }, 0);
+  assert_eq!(fegetround(), FE_UPWARD);
+  assert_eq!(fetestexcept(FE_ALL_EXCEPT), FE_OVERFLOW);
+  assert_eq!(read_errno(), 57);
+
+  reset_fenv_state();
+}
+
+#[test]
 fn fegetenv_success_preserves_errno() {
   reset_fenv_state();
   write_errno(71);

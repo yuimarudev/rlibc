@@ -324,6 +324,24 @@ fn strftime_e_alternative_modifier_s_aliases_epoch_seconds_token() {
 }
 
 #[test]
+fn strftime_e_alternative_modifier_s_aliases_negative_epoch_seconds() {
+  let mut time_parts = fixture_tm();
+
+  time_parts.tm_year = 69;
+  time_parts.tm_mon = 11;
+  time_parts.tm_mday = 31;
+  time_parts.tm_hour = 23;
+  time_parts.tm_min = 59;
+  time_parts.tm_sec = 59;
+
+  let expected = b"-1|-1";
+  let (written, output) = run_strftime(b"%Es|%s\0", &time_parts, 64);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
 fn strftime_e_alternative_modifier_n_and_t_alias_control_tokens() {
   let expected = b"\n|\n|\t|\t";
   let (written, output) = run_strftime(b"%En|%n|%Et|%t\0", &fixture_tm(), 32);

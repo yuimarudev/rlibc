@@ -1118,6 +1118,29 @@ fn quality_gate_script_usage_lists_duplicate_profile_rejection_between_profile_a
 }
 
 #[test]
+fn quality_gate_script_usage_lists_duplicate_profile_rejection_after_profile_option_line() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let profile_option = "--profile <pr|nightly|full>  select quality-gate profile";
+  let duplicate_profile_rejection =
+    "duplicate --profile is rejected for both --profile <value> and --profile=<value> forms";
+  let profile_option_index = script
+    .find(profile_option)
+    .unwrap_or_else(|| panic!("usage must contain profile option contract line: {profile_option}"));
+  let duplicate_profile_rejection_index = script
+    .find(duplicate_profile_rejection)
+    .unwrap_or_else(|| {
+      panic!(
+        "usage must contain duplicate-profile rejection contract line: {duplicate_profile_rejection}"
+      )
+    });
+
+  assert!(
+    profile_option_index < duplicate_profile_rejection_index,
+    "usage must list duplicate-profile rejection guidance after the profile option line"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_mentions_duplicate_option_rejection_once() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let occurrence_count = script

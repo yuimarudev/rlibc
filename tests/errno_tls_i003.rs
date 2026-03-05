@@ -3812,7 +3812,7 @@ fn three_level_many_branch_generations_start_zero_and_preserve_trunk_errno() {
     "expected one report per branch generation round",
   );
 
-  for (expected_branch, expected_leaf, trunk_after_round, branch_summary) in round_reports.iter() {
+  for (expected_branch, expected_leaf, trunk_after_round, branch_summary) in &round_reports {
     let (branch_slot, branch_start, branch_before, branch_finish, leaf_summary) = branch_summary;
     let (leaf_slot, leaf_start, leaf_before, leaf_finish) = leaf_summary;
 

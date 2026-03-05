@@ -100,6 +100,17 @@ fn dynamic_clockid_helpers_max_fd_aliases_to_negative_one_after_encoding() {
 }
 
 #[test]
+fn dynamic_clockid_helpers_near_max_fd_aliases_to_negative_two_after_encoding() {
+  let near_max_fd = c_int::MAX - 1;
+  let dynamic_clock_id = fd_to_clockid(near_max_fd);
+
+  assert_eq!(dynamic_clock_id, CLOCK_TAI);
+  assert_eq!(dynamic_clock_id & 0b111, CLOCKFD);
+  assert_eq!(clockid_to_fd(dynamic_clock_id), -2);
+  assert_ne!(clockid_to_fd(dynamic_clock_id), near_max_fd);
+}
+
+#[test]
 fn dynamic_clockid_helpers_min_fd_aliases_to_zero_fd_after_encoding() {
   let min_fd = c_int::MIN;
   let min_dynamic_clock_id = fd_to_clockid(min_fd);
@@ -332,6 +343,52 @@ fn dynamic_clockid_alias_for_min_fd_matches_zero_fd_result_class() {
 }
 
 #[test]
+fn dynamic_clockid_alias_for_near_max_fd_matches_static_tai_result_class() {
+  let near_max_fd = c_int::MAX - 1;
+  let mut alias_ts = timespec {
+    tv_sec: 911,
+    tv_nsec: 922,
+  };
+  let alias_before = alias_ts;
+  let mut static_ts = timespec {
+    tv_sec: 933,
+    tv_nsec: 944,
+  };
+  let static_before = static_ts;
+
+  write_errno(75);
+
+  let alias_result = clock_gettime(fd_to_clockid(near_max_fd), &raw mut alias_ts);
+  let alias_errno = read_errno();
+
+  write_errno(76);
+
+  let static_result = clock_gettime(CLOCK_TAI, &raw mut static_ts);
+  let static_errno = read_errno();
+
+  assert_eq!(fd_to_clockid(near_max_fd), CLOCK_TAI);
+  assert_eq!(alias_result, static_result);
+
+  if alias_result == 0 {
+    assert!(alias_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&alias_ts.tv_nsec));
+    assert_eq!(alias_errno, 75);
+
+    assert!(static_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&static_ts.tv_nsec));
+    assert_eq!(static_errno, 76);
+
+    return;
+  }
+
+  assert_eq!(alias_result, -1);
+  assert_eq!(alias_errno, EINVAL);
+  assert_eq!(alias_ts, alias_before);
+  assert_eq!(static_errno, EINVAL);
+  assert_eq!(static_ts, static_before);
+}
+
+#[test]
 fn dynamic_clockid_alias_for_min_fd_after_null_timespec_matches_zero_fd_errno_contract() {
   let mut min_ts = timespec {
     tv_sec: 505,
@@ -457,6 +514,62 @@ fn min_fd_and_zero_fd_alias_after_null_share_non_null_result_class_and_errno_con
   assert_eq!(zero_errno, EINVAL);
   assert_eq!(min_ts, min_before);
   assert_eq!(zero_ts, zero_before);
+}
+
+#[test]
+fn min_fd_and_zero_fd_alias_after_null_then_all_clock_ids_share_contract() {
+  let dynamic_clock_ids: [clockid_t; 2] = [fd_to_clockid(c_int::MIN), fd_to_clockid(0)];
+  let valid_clock_ids: [clockid_t; 12] = [
+    CLOCK_REALTIME,
+    CLOCK_MONOTONIC,
+    CLOCK_PROCESS_CPUTIME_ID,
+    CLOCK_THREAD_CPUTIME_ID,
+    CLOCK_MONOTONIC_RAW,
+    CLOCK_REALTIME_COARSE,
+    CLOCK_MONOTONIC_COARSE,
+    CLOCK_BOOTTIME,
+    CLOCK_REALTIME_ALARM,
+    CLOCK_BOOTTIME_ALARM,
+    CLOCK_SGI_CYCLE,
+    CLOCK_TAI,
+  ];
+
+  assert_eq!(dynamic_clock_ids[0], dynamic_clock_ids[1]);
+
+  for (alias_index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    write_errno(EINVAL);
+
+    let null_result = clock_gettime(*dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
+
+    for (valid_index, valid_clock_id) in valid_clock_ids.iter().enumerate() {
+      let mut ts = timespec {
+        tv_sec: 9_000
+          + i64::try_from(alias_index).unwrap_or(0)
+          + i64::try_from(valid_index).unwrap_or(0),
+        tv_nsec: 10_000
+          + i64::try_from(alias_index).unwrap_or(0)
+          + i64::try_from(valid_index).unwrap_or(0),
+      };
+      let before = ts;
+
+      write_errno(EFAULT);
+      let result = clock_gettime(*valid_clock_id, &raw mut ts);
+
+      if result == 0 {
+        assert!(ts.tv_sec >= 0);
+        assert!((0..1_000_000_000).contains(&ts.tv_nsec));
+        assert_eq!(read_errno(), EFAULT);
+        continue;
+      }
+
+      assert_eq!(result, -1);
+      assert_eq!(read_errno(), EINVAL);
+      assert_eq!(ts, before);
+    }
+  }
 }
 
 #[test]
@@ -589,6 +702,32 @@ fn dynamic_clockid_alias_min_and_zero_after_invalid_clock_id_keep_errno_einval()
     assert_eq!(dynamic_result, -1);
     assert_eq!(read_errno(), EINVAL);
     assert_eq!(dynamic_ts, dynamic_before);
+  }
+}
+
+#[test]
+fn dynamic_clockid_alias_min_and_zero_null_after_invalid_clock_id_sets_efault() {
+  let dynamic_clock_ids: [clockid_t; 2] = [fd_to_clockid(c_int::MIN), fd_to_clockid(0)];
+
+  assert_eq!(dynamic_clock_ids[0], dynamic_clock_ids[1]);
+
+  for (index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    let mut invalid_ts = timespec {
+      tv_sec: 14_000 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 15_000 + i64::try_from(index).unwrap_or(0),
+    };
+
+    write_errno(0);
+
+    let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
+
+    assert_eq!(invalid_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+
+    let null_result = clock_gettime(*dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
   }
 }
 

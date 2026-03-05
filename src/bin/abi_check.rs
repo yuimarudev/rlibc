@@ -309,8 +309,8 @@ fn assign_golden_path(
   }
 
   let option_like = is_option_like_value(path);
-  let invalid_dash_prefixed_path = (!allow_dash_prefix && option_like)
-    || (allow_dash_prefix && option_like && has_leading_whitespace(path));
+  let invalid_dash_prefixed_path =
+    option_like && (!allow_dash_prefix || has_leading_whitespace(path));
 
   if is_missing_option_value(path) || invalid_dash_prefixed_path {
     return Err(format!("missing value for {GOLDEN_FLAG}"));
@@ -2562,6 +2562,25 @@ memcpy
     );
     let parsed = parse_snapshot(snapshot)
       .expect("trailing CRLF empty line after symbol list should be accepted");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
+    assert_eq!(parsed.symbols, BTreeSet::from(["memcpy".to_string()]));
+  }
+
+  #[test]
+  fn parse_snapshot_accepts_multiple_trailing_crlf_empty_lines_after_symbols_block() {
+    let snapshot = concat!(
+      "ABI_SNAPSHOT_V1\r\n",
+      "ELF_CLASS=ELF64\r\n",
+      "ELF_MACHINE=Advanced Micro Devices X86-64\r\n",
+      "SYMBOLS:\r\n",
+      "memcpy\r\n",
+      "\r\n",
+      "\r\n",
+    );
+    let parsed = parse_snapshot(snapshot)
+      .expect("multiple trailing CRLF empty lines after symbol list should be accepted");
 
     assert_eq!(parsed.class, "ELF64");
     assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");

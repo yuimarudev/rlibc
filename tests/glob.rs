@@ -10,6 +10,7 @@ use rlibc::glob::{
 };
 use std::ffi::{CStr, CString, OsStr};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -604,6 +605,29 @@ fn glob_no_match_returns_glob_nomatch() {
 
   assert_eq!(result, GLOB_NOMATCH);
   assert_eq!(state.path_count(), 0);
+}
+
+#[test]
+fn glob_literal_dangling_symlink_matches_existing_link_path() {
+  let temp_dir = TempDir::new();
+  let target_path = temp_dir.path().join("missing-target");
+  let link_path = temp_dir.path().join("dangling-link");
+
+  symlink(&target_path, &link_path).unwrap_or_else(|error| {
+    panic!(
+      "failed to create dangling symlink {} -> {}: {error}",
+      link_path.display(),
+      target_path.display()
+    );
+  });
+
+  let pattern = pattern(temp_dir.path(), "dangling-link");
+  let mut state = GlobState::new();
+  let result = run_glob(&pattern, 0, &mut state);
+
+  assert_eq!(result, 0);
+  assert_eq!(state.path_count(), 1);
+  assert_eq!(state.paths(), vec![stringify_path(&link_path)]);
 }
 
 #[test]
