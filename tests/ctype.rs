@@ -548,6 +548,17 @@ fn isascii_matches_closed_range_predicate_for_dense_signed_range() {
 }
 
 #[test]
+fn isascii_matches_toascii_fixed_point_relation_across_dense_signed_range() {
+  for probe in -4096..=4096 {
+    assert_eq!(
+      isascii(probe),
+      c_int::from(toascii(probe) == probe),
+      "isascii/toascii fixed-point relation mismatch for probe={probe}"
+    );
+  }
+}
+
+#[test]
 fn isascii_and_toascii_do_not_modify_errno() {
   let sentinels = [0, 17, 913, c_int::MAX];
   let boundary_probes = [c_int::MIN, -4096, -2, EOF_C_INT, 256, 4096, c_int::MAX];

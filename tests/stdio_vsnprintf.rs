@@ -2235,6 +2235,37 @@ fn count_conversion_hn_success_does_not_clobber_errno() {
 }
 
 #[test]
+fn count_conversion_n_hn_hhn_zero_prefix_success_does_not_clobber_errno() {
+  let mut buffer = [b'Q'; 8];
+  let mut count_n: c_int = -1;
+  let mut count_hn: i16 = -1;
+  let mut count_hhn: i8 = -1;
+  let mut ap = OwnedVaList::from_u64_slots(vec![
+    ptr_slot(core::ptr::addr_of_mut!(count_n).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(count_hn).cast_const()),
+    ptr_slot(core::ptr::addr_of_mut!(count_hhn).cast_const()),
+  ]);
+
+  set_errno(91);
+  // SAFETY: pointers are valid and `ap` points to x86_64 SysV `va_list` layout.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"%n%hn%hhn\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 0);
+  assert_eq!(buffer[0], 0);
+  assert_eq!(count_n, 0);
+  assert_eq!(count_hn, 0);
+  assert_eq!(count_hhn, 0);
+  assert_eq!(read_errno(), 91);
+}
+
+#[test]
 fn count_conversion_ln_success_does_not_clobber_errno() {
   let mut buffer = [0_u8; 8];
   let mut count_l: i64 = -1;

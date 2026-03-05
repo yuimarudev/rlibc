@@ -696,6 +696,38 @@ fn prlimit64_high_bit_old_limit_pointer_sets_efault() {
 }
 
 #[test]
+fn prlimit64_high_bit_old_limit_pointer_sets_efault_and_preserves_limits() {
+  let _guard = process_wide_rlimit_lock();
+  let mut original = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  let mut observed = RLimit {
+    rlim_cur: 0,
+    rlim_max: 0,
+  };
+  let invalid_old_limit = core::ptr::with_exposed_provenance_mut::<RLimit>(usize::MAX);
+  let get_original = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut original) };
+
+  assert_eq!(get_original, 0, "precondition getrlimit must succeed");
+
+  set_errno(0);
+
+  let status = unsafe { prlimit64(0, RLIMIT_NOFILE, core::ptr::null(), invalid_old_limit) };
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  let get_observed = unsafe { getrlimit(RLIMIT_NOFILE, &raw mut observed) };
+
+  assert_eq!(get_observed, 0, "post-failure getrlimit must succeed");
+  assert_eq!(
+    observed, original,
+    "failed prlimit64 read with high-bit invalid old_limit pointer must not modify current process limits"
+  );
+}
+
+#[test]
 fn prlimit64_low_invalid_old_limit_pointer_sets_efault_and_preserves_limits() {
   let _guard = process_wide_rlimit_lock();
   let mut original = RLimit {

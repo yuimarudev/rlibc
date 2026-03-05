@@ -852,6 +852,13 @@ fn project_name_c_string_accessors_stay_consistent() {
     "first payload byte should match between project_name and project_name_cstr_bytes"
   );
   assert_eq!(
+    c_name_bytes[rlibc::project_name_cstr_len() - 1],
+    *name_bytes
+      .last()
+      .expect("project_name_cstr_len() > 0 guarantees payload is non-empty"),
+    "last payload byte should match between project_name and project_name_cstr_bytes"
+  );
+  assert_eq!(
     c_name.to_bytes().len(),
     rlibc::project_name_cstr_len(),
     "project_name_cstr() payload length should match project_name_cstr_len()"

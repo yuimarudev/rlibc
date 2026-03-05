@@ -2751,6 +2751,34 @@ fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_path_value_be
 }
 
 #[test]
+fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_path_value_before_short_help() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg("   --bogus")
+    .arg("-h")
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject whitespace-prefixed option-like token used as --golden value before -h\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("missing value for --golden"),
+    "abi_check stderr must explain rejection for whitespace-prefixed option-like --golden values before -h\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
 fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_as_golden_path_before_help()
  {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
@@ -2775,6 +2803,34 @@ fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_a
   assert!(
     stderr.contains("unknown argument: --help"),
     "abi_check stderr must report --help as an unknown positional argument in this parse mode\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
+fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_as_golden_path_before_short_help(
+) {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let output = Command::new(&abi_check_path)
+    .arg("--golden=   --bogus")
+    .arg("-h")
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must not treat -h as help when whitespace-prefixed option-like --golden=<...> is present\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("unknown argument: -h"),
+    "abi_check stderr must report -h as an unknown positional argument in this parse mode\nstderr:\n{stderr}",
   );
 }
 

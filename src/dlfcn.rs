@@ -11,8 +11,8 @@
 
 use crate::abi::errno::{
   EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST,
-  EHOSTUNREACH, EINTR, EINVAL, EISDIR, ENETUNREACH, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR, EPIPE,
-  ETIMEDOUT,
+  EHOSTUNREACH, EINTR, EINVAL, EISDIR, ENETDOWN, ENETUNREACH, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR,
+  EPIPE, ETIMEDOUT,
 };
 use crate::abi::types::{c_char, c_int, c_void};
 use crate::errno::{__errno_location, set_errno};
@@ -451,6 +451,7 @@ const fn io_error_kind_errno(error_kind: io::ErrorKind) -> Option<c_int> {
     io::ErrorKind::AddrInUse => Some(EADDRINUSE),
     io::ErrorKind::AddrNotAvailable => Some(EADDRNOTAVAIL),
     io::ErrorKind::NetworkUnreachable => Some(ENETUNREACH),
+    io::ErrorKind::NetworkDown => Some(ENETDOWN),
     io::ErrorKind::HostUnreachable => Some(EHOSTUNREACH),
     io::ErrorKind::PermissionDenied => Some(EACCES),
     io::ErrorKind::InvalidInput => Some(EINVAL),
@@ -858,6 +859,23 @@ mod tests {
     set_dlsym_missing_symbol_message(
       c"dup_symbol".as_ptr(),
       Some("dup_symbol : host loader unresolved entry"),
+    );
+
+    let message = take_dlerror_message().expect("expected pending dlerror message");
+
+    assert_eq!(
+      message,
+      "rlibc: requested symbol was not found: dup_symbol: host loader unresolved entry",
+    );
+  }
+
+  #[test]
+  fn set_dlsym_missing_symbol_message_deduplicates_symbol_prefix_with_leading_space() {
+    reset_thread_local_error_state();
+
+    set_dlsym_missing_symbol_message(
+      c"dup_symbol".as_ptr(),
+      Some("  dup_symbol: host loader unresolved entry"),
     );
 
     let message = take_dlerror_message().expect("expected pending dlerror message");
@@ -1991,6 +2009,13 @@ mod tests {
       io_error_errno(&error, ENOENT),
       crate::abi::errno::ENETUNREACH
     );
+  }
+
+  #[test]
+  fn io_error_errno_maps_network_down_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::NetworkDown, "network down");
+
+    assert_eq!(io_error_errno(&error, ENOENT), crate::abi::errno::ENETDOWN);
   }
 
   #[test]

@@ -403,6 +403,63 @@ fn min_fd_and_zero_fd_alias_after_null_then_invalid_clock_overwrite_errno_with_e
 }
 
 #[test]
+fn min_fd_and_zero_fd_alias_after_null_share_non_null_result_class_and_errno_contract() {
+  let mut min_ts = timespec {
+    tv_sec: 1_111,
+    tv_nsec: 2_222,
+  };
+  let min_before = min_ts;
+  let mut zero_ts = timespec {
+    tv_sec: 3_333,
+    tv_nsec: 4_444,
+  };
+  let zero_before = zero_ts;
+
+  let min_dynamic_clock_id = fd_to_clockid(c_int::MIN);
+  let zero_dynamic_clock_id = fd_to_clockid(0);
+
+  assert_eq!(min_dynamic_clock_id, zero_dynamic_clock_id);
+
+  write_errno(EINVAL);
+  let min_null_result = clock_gettime(min_dynamic_clock_id, ptr::null_mut());
+  assert_eq!(min_null_result, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  write_errno(EINVAL);
+  let zero_null_result = clock_gettime(zero_dynamic_clock_id, ptr::null_mut());
+  assert_eq!(zero_null_result, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  write_errno(EFAULT);
+  let min_result = clock_gettime(min_dynamic_clock_id, &raw mut min_ts);
+  let min_errno = read_errno();
+
+  write_errno(EFAULT);
+  let zero_result = clock_gettime(zero_dynamic_clock_id, &raw mut zero_ts);
+  let zero_errno = read_errno();
+
+  assert_eq!(min_result, zero_result);
+
+  if min_result == 0 {
+    assert!(min_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&min_ts.tv_nsec));
+    assert_eq!(min_errno, EFAULT);
+
+    assert!(zero_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&zero_ts.tv_nsec));
+    assert_eq!(zero_errno, EFAULT);
+
+    return;
+  }
+
+  assert_eq!(min_result, -1);
+  assert_eq!(min_errno, EINVAL);
+  assert_eq!(zero_errno, EINVAL);
+  assert_eq!(min_ts, min_before);
+  assert_eq!(zero_ts, zero_before);
+}
+
+#[test]
 fn dynamic_clockid_alias_for_max_fd_follows_thread_cputime_errno_contract() {
   let mut ts = timespec {
     tv_sec: 0,

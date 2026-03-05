@@ -267,6 +267,14 @@ fn crt_pipeline_rejects_unknown_argument() {
 }
 
 #[test]
+fn crt_pipeline_unknown_argument_before_bare_positional_still_fails_as_unknown() {
+  let args = vec!["--unknown-option".to_string(), "positional".to_string()];
+  let output = run_pipeline(&args);
+
+  assert_pipeline_failure_contains(&output, "unknown argument: --unknown-option");
+}
+
+#[test]
 fn crt_pipeline_rejects_bare_positional_argument() {
   let args = vec!["positional".to_string()];
   let output = run_pipeline(&args);

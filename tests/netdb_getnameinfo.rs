@@ -347,6 +347,25 @@ fn getnameinfo_rejects_unknown_flags_before_no_output_noname_with_name_required(
 }
 
 #[test]
+fn getnameinfo_rejects_unknown_flags_before_no_output_noname_with_numerichost() {
+  // SAFETY: address/output pointers are intentionally null. Unsupported flags
+  // must be rejected before no-output handling even when NI_NUMERICHOST is set.
+  let status = unsafe {
+    getnameinfo(
+      core::ptr::null(),
+      slen(0),
+      core::ptr::null_mut(),
+      slen(64),
+      core::ptr::null_mut(),
+      slen(32),
+      NI_NUMERICHOST | 0x4000,
+    )
+  };
+
+  assert_eq!(status, EAI_BADFLAGS);
+}
+
+#[test]
 fn getnameinfo_rejects_unknown_flags_before_no_output_noname_with_name_required_and_numerichost() {
   // SAFETY: address/output pointers are intentionally null. Unsupported flags
   // must still be rejected before no-output handling, even when

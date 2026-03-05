@@ -565,6 +565,32 @@ fn decode_utf8_rejects_corrupted_pending_expected_length_mismatch_on_empty_input
 }
 
 #[test]
+fn decode_utf8_rejects_corrupted_pending_expected_length_mismatch_then_retries_same_input() {
+  let mut state = mbstate_t::new();
+
+  // bytes=[0xE3, 0, 0, 0], pending_len=1, expected_len=4.
+  // Lead byte 0xE3 implies expected_len=3, so this state is impossible.
+  write_state_bytes(&mut state, [0xE3, 0x00, 0x00, 0x00, 0x01, 0x04, 0x00, 0x00]);
+
+  let input = [0xE3, 0x81, 0x82];
+  let first = decode_utf8(&mut state, &input);
+
+  assert_eq!(first, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+
+  let retried = decode_utf8(&mut state, &input);
+
+  assert_eq!(
+    retried,
+    Utf8DecodeResult::Complete {
+      code_point: 0x3042,
+      consumed: input.len(),
+    },
+  );
+  assert!(state.is_initial());
+}
+
+#[test]
 fn decode_utf8_rejects_pending_state_with_expected_length_above_utf8_max_on_empty_input() {
   let mut state = mbstate_t::new();
 
@@ -671,6 +697,32 @@ fn decode_utf8_rejects_zero_pending_with_nonzero_expected_length_on_empty_input(
   let result = decode_utf8(&mut state, &[]);
 
   assert_eq!(result, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+}
+
+#[test]
+fn decode_utf8_rejects_zero_pending_with_nonzero_expected_length_then_retries_same_input() {
+  let mut state = mbstate_t::new();
+
+  // bytes=[0, 0, 0, 0], pending_len=0, expected_len=3.
+  // Zero pending bytes with non-zero expected length are impossible state.
+  write_state_bytes(&mut state, [0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00]);
+
+  let input = [b'A', b'B'];
+  let first = decode_utf8(&mut state, &input);
+
+  assert_eq!(first, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+
+  let retried = decode_utf8(&mut state, &input);
+
+  assert_eq!(
+    retried,
+    Utf8DecodeResult::Complete {
+      code_point: u32::from(b'A'),
+      consumed: 1,
+    },
+  );
   assert!(state.is_initial());
 }
 

@@ -576,6 +576,35 @@ fn fcntl_dupfd_cloexec_with_minimum_equal_to_source_fd_returns_distinct_fd() {
 }
 
 #[test]
+fn fcntl_dupfd_cloexec_with_minimum_equal_to_source_fd_keeps_errno_unchanged() {
+  let (path, file) = create_read_only_temp_file(b"dup-cloexec-min-equal-errno");
+  let source_fd = file.as_raw_fd();
+
+  write_errno(EINVAL);
+  // SAFETY: `source_fd` is valid and minimum descriptor is an integer.
+  let duplicated_fd = unsafe { fcntl(source_fd, F_DUPFD_CLOEXEC, as_c_long(source_fd)) };
+
+  assert!(duplicated_fd >= source_fd);
+  assert_ne!(duplicated_fd, source_fd);
+  assert_eq!(read_errno(), EINVAL);
+
+  // SAFETY: `duplicated_fd` is freshly returned by `F_DUPFD_CLOEXEC`
+  // and uniquely owned by this test.
+  let duplicated = unsafe { OwnedFd::from_raw_fd(duplicated_fd) };
+
+  // SAFETY: `duplicated` is valid and command takes no pointer arguments.
+  let duplicated_flags = unsafe { fcntl(duplicated.as_raw_fd(), F_GETFD, as_c_long(0)) };
+
+  assert!(duplicated_flags >= 0);
+  assert_ne!(duplicated_flags & FD_CLOEXEC, 0);
+
+  drop(duplicated);
+  drop(file);
+  fs::remove_file(&path)
+    .unwrap_or_else(|error| panic!("failed to remove temp file {}: {error}", path.display()));
+}
+
+#[test]
 fn fcntl_dupfd_cloexec_skips_taken_minimum_descriptor() {
   let (path, file) = create_read_only_temp_file(b"cloexec-taken");
   let source_fd = file.as_raw_fd();

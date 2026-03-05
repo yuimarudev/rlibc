@@ -1049,6 +1049,135 @@ fn setvbuf_line_buffered_mode_flushes_percent_s_newline_after_percent_g_without_
 }
 
 #[test]
+fn setvbuf_line_buffered_mode_defers_percent_s_without_newline_after_percent_g_until_fflush() {
+  let _guard = test_lock();
+  let format = b"%g%s\0";
+  let suffix = b"tail\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I022 mixed %g/%s defer test"
+  );
+
+  write_errno(67);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 67);
+
+  write_errno(71);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%g%s", double, char*)`.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      1.25_f64,
+      suffix.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert!(
+    written > 0,
+    "line-buffered mixed %g/%s output without newline must produce bytes",
+  );
+  assert_eq!(read_errno(), 71);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_before_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_before_flush, 0,
+    "line-buffered mode must defer when downstream %s emits no newline after %g",
+  );
+
+  write_errno(73);
+
+  // SAFETY: stream pointer came from `tmpfile` and is valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 73);
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_after_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_after_flush,
+    c_long::from(written),
+    "fflush must make deferred mixed %g/%s output visible",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_flushes_percent_s_newline_after_percent_a_without_literal_newline() {
+  let _guard = test_lock();
+  let format = b"%a%s\0";
+  let suffix = b"tail\n\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I023 mixed %a/%s newline propagation test"
+  );
+
+  write_errno(67);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 67);
+
+  write_errno(71);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%a%s", double, char*)`.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      1.25_f64,
+      suffix.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert!(
+    written > 0,
+    "line-buffered mixed %a/%s output with newline in %s payload must produce bytes",
+  );
+  assert_eq!(read_errno(), 71);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset = unsafe { lseek(fd, 0, SEEK_END) };
+  let expected_end = c_long::from(written);
+
+  assert_eq!(
+    end_offset, expected_end,
+    "line-buffered mode must flush when downstream %s emits newline after %a",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
 fn setvbuf_line_buffered_mode_flushes_dynamic_width_and_precision_percent_f_newline_payload() {
   let _guard = test_lock();
   let format = b"%*.*f\n\0";

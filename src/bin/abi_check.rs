@@ -293,6 +293,10 @@ fn is_option_like_value(value: &str) -> bool {
   value.trim_start().starts_with('-')
 }
 
+fn has_leading_whitespace(value: &str) -> bool {
+  value.chars().next().is_some_and(char::is_whitespace)
+}
+
 fn assign_golden_path(
   options: &mut CliOptions,
   path: &str,
@@ -304,7 +308,11 @@ fn assign_golden_path(
     ));
   }
 
-  if is_missing_option_value(path) || (!allow_dash_prefix && is_option_like_value(path)) {
+  let option_like = is_option_like_value(path);
+  let invalid_dash_prefixed_path = (!allow_dash_prefix && option_like)
+    || (allow_dash_prefix && option_like && has_leading_whitespace(path));
+
+  if is_missing_option_value(path) || invalid_dash_prefixed_path {
     return Err(format!("missing value for {GOLDEN_FLAG}"));
   }
 
@@ -1430,11 +1438,33 @@ mod tests {
   }
 
   #[test]
+  fn has_help_flag_ignores_short_help_after_whitespace_prefixed_option_like_golden_equals_argument()
+  {
+    let args = vec![
+      "--golden=   --option-like-path.abi".to_string(),
+      "-h".to_string(),
+    ];
+
+    assert!(!super::has_help_flag(&args));
+  }
+
+  #[test]
   fn has_help_flag_ignores_help_after_whitespace_prefixed_option_like_golden_argument() {
     let args = vec![
       "--golden".to_string(),
       "   --option-like-path.abi".to_string(),
       "--help".to_string(),
+    ];
+
+    assert!(!super::has_help_flag(&args));
+  }
+
+  #[test]
+  fn has_help_flag_ignores_short_help_after_whitespace_prefixed_option_like_golden_argument() {
+    let args = vec![
+      "--golden".to_string(),
+      "   --option-like-path.abi".to_string(),
+      "-h".to_string(),
     ];
 
     assert!(!super::has_help_flag(&args));

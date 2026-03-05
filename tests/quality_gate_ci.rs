@@ -373,6 +373,27 @@ fn quality_gate_script_full_profile_references_optional_adapters() {
 }
 
 #[test]
+fn quality_gate_script_full_profile_runs_nightly_before_optional_adapters() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let full_body = extract_function_body_lines(&script, "run_full_profile() {");
+  let nightly_step = "run_nightly_profile";
+  let libc_adapter_if = "if [[ -x scripts/conformance/libc-test-adapter.sh ]]; then";
+  let nightly_step_index = full_body
+    .iter()
+    .position(|line| line == nightly_step)
+    .unwrap_or_else(|| panic!("full profile must contain step: {nightly_step}"));
+  let libc_adapter_if_index = full_body
+    .iter()
+    .position(|line| line == libc_adapter_if)
+    .unwrap_or_else(|| panic!("full profile must contain adapter guard: {libc_adapter_if}"));
+
+  assert!(
+    nightly_step_index < libc_adapter_if_index,
+    "full profile must run nightly baseline checks before optional adapter branches"
+  );
+}
+
+#[test]
 fn quality_gate_script_full_profile_gates_ltp_adapter_on_env_and_executable() {
   let script = read_repository_file("scripts/quality-gate.sh");
 
