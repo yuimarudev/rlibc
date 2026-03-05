@@ -297,6 +297,10 @@ fn has_leading_whitespace(value: &str) -> bool {
   value.chars().next().is_some_and(char::is_whitespace)
 }
 
+fn has_trailing_whitespace(value: &str) -> bool {
+  value.chars().next_back().is_some_and(char::is_whitespace)
+}
+
 fn assign_golden_path(
   options: &mut CliOptions,
   path: &str,
@@ -309,8 +313,13 @@ fn assign_golden_path(
   }
 
   let option_like = is_option_like_value(path);
-  let invalid_dash_prefixed_path =
-    option_like && (!allow_dash_prefix || has_leading_whitespace(path));
+  let invalid_dash_prefixed_path = if !option_like {
+    false
+  } else if allow_dash_prefix {
+    has_leading_whitespace(path) || has_trailing_whitespace(path)
+  } else {
+    true
+  };
 
   if is_missing_option_value(path) || invalid_dash_prefixed_path {
     return Err(format!("missing value for {GOLDEN_FLAG}"));
@@ -972,6 +981,15 @@ mod tests {
   }
 
   #[test]
+  fn parse_cli_options_rejects_tab_prefixed_option_like_golden_equals_value() {
+    let args = vec!["--golden=\t--bogus".to_string()];
+    let error =
+      parse_cli_options(&args).expect_err("tab-prefixed option-like equals-style value must fail");
+
+    assert!(error.contains("missing value for --golden"));
+  }
+
+  #[test]
   fn parse_cli_options_rejects_whitespace_suffixed_option_like_golden_equals_value() {
     let args = vec!["--golden=--bogus ".to_string()];
     let error = parse_cli_options(&args)
@@ -1007,6 +1025,15 @@ mod tests {
     let args = vec!["--golden".to_string(), "   --bogus".to_string()];
     let error =
       parse_cli_options(&args).expect_err("whitespace-prefixed option-like golden path must fail");
+
+    assert!(error.contains("missing value for --golden"));
+  }
+
+  #[test]
+  fn parse_cli_options_rejects_tab_prefixed_option_like_golden_path() {
+    let args = vec!["--golden".to_string(), "\t--bogus".to_string()];
+    let error =
+      parse_cli_options(&args).expect_err("tab-prefixed option-like golden path must fail");
 
     assert!(error.contains("missing value for --golden"));
   }
@@ -2059,6 +2086,23 @@ memcpy
     );
     let parsed = parse_snapshot(snapshot)
       .expect("parser should accept CRLF line endings on ELF_CLASS metadata line");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
+    assert!(parsed.symbols.contains("memcpy"));
+  }
+
+  #[test]
+  fn parse_snapshot_accepts_machine_line_with_crlf_line_endings() {
+    let snapshot = concat!(
+      "ABI_SNAPSHOT_V1\n",
+      "ELF_CLASS=ELF64\n",
+      "ELF_MACHINE=Advanced Micro Devices X86-64\r\n",
+      "SYMBOLS:\n",
+      "memcpy\n",
+    );
+    let parsed = parse_snapshot(snapshot)
+      .expect("parser should accept CRLF line endings on ELF_MACHINE metadata line");
 
     assert_eq!(parsed.class, "ELF64");
     assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");

@@ -159,7 +159,23 @@ fn run(args: &[String]) -> Result<Option<Summary>, String> {
   }
 
   if config.strict_xpass && summary.xpass > 0 {
-    return Err("strict-xpass mode: xpass cases are present".to_string());
+    let first = classified
+      .iter()
+      .find(|result| result.status == FinalStatus::XPass)
+      .map_or_else(
+        || "<unknown>/<unknown>/<unknown>".to_string(),
+        |result| {
+          format!(
+            "{}/{}/{}",
+            result.key.suite, result.key.case_id, result.key.target
+          )
+        },
+      );
+
+    return Err(format!(
+      "strict-xpass mode: xpass cases are present: {first} (+{} more)",
+      summary.xpass.saturating_sub(1)
+    ));
   }
 
   Ok(Some(summary))
@@ -819,7 +835,7 @@ mod tests {
   use super::{
     Action, CaseKey, ClassifiedResult, FinalStatus, LedgerEntry, RawResult, RawStatus,
     classify_results, collect_expired_entries, parse_args, parse_ledger_csv, parse_results_csv,
-    summarize,
+    run, summarize,
   };
 
   fn test_key(case_id: &str, target: &str) -> CaseKey {
@@ -828,6 +844,26 @@ mod tests {
       case_id: case_id.to_string(),
       target: target.to_string(),
     }
+  }
+
+  fn write_temp_file(suffix: &str, content: &str) -> std::path::PathBuf {
+    let mut path = std::env::temp_dir();
+    let nanos = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .expect("clock should be after UNIX_EPOCH")
+      .as_nanos();
+    path.push(format!(
+      "rlibc_xfail_ledger_{suffix}_{}_{}.csv",
+      std::process::id(),
+      nanos
+    ));
+    std::fs::write(&path, content).expect("temporary fixture file should be writable");
+
+    path
+  }
+
+  fn remove_temp_file(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
   }
 
   #[test]
@@ -1876,5 +1912,33 @@ libc-test,math/pow,x86_64-unknown-linux-gnu,flaky
 
     assert_eq!(expired.len(), 1);
     assert_eq!(expired[0].key.case_id, "old");
+  }
+
+  #[test]
+  fn run_strict_xpass_error_reports_first_xpass_case_key() {
+    let ledger = "\
+suite,case,target,reason,expires
+libc-test,math/pow,x86_64-unknown-linux-gnu,known issue,
+";
+    let results = "\
+suite,case,target,status
+libc-test,math/pow,x86_64-unknown-linux-gnu,PASS
+";
+    let ledger_path = write_temp_file("strict_xpass_ledger", ledger);
+    let results_path = write_temp_file("strict_xpass_results", results);
+    let args = vec![
+      "--ledger".to_string(),
+      ledger_path.display().to_string(),
+      "--results".to_string(),
+      results_path.display().to_string(),
+      "--strict-xpass".to_string(),
+    ];
+    let error = run(&args).expect_err("strict xpass mode should fail when xpass exists");
+
+    assert!(error.contains("strict-xpass mode: xpass cases are present"));
+    assert!(error.contains("libc-test/math/pow/x86_64-unknown-linux-gnu"));
+
+    remove_temp_file(&ledger_path);
+    remove_temp_file(&results_path);
   }
 }

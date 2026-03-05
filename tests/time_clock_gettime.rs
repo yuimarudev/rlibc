@@ -441,6 +441,63 @@ fn dynamic_clockid_alias_for_near_max_fd_after_null_timespec_matches_static_tai_
 }
 
 #[test]
+fn dynamic_clockid_alias_for_near_max_fd_after_invalid_clock_id_matches_static_tai_errno_contract()
+{
+  let near_max_fd = c_int::MAX - 1;
+  let alias_clock_id = fd_to_clockid(near_max_fd);
+  let mut invalid_ts = timespec {
+    tv_sec: 989,
+    tv_nsec: 990,
+  };
+  let mut alias_ts = timespec {
+    tv_sec: 991,
+    tv_nsec: 992,
+  };
+  let alias_before = alias_ts;
+  let mut static_ts = timespec {
+    tv_sec: 993,
+    tv_nsec: 994,
+  };
+  let static_before = static_ts;
+
+  assert_eq!(alias_clock_id, CLOCK_TAI);
+
+  write_errno(0);
+  let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
+
+  assert_eq!(invalid_result, -1);
+  assert_eq!(read_errno(), EINVAL);
+
+  write_errno(EINVAL);
+  let alias_result = clock_gettime(alias_clock_id, &raw mut alias_ts);
+  let alias_errno = read_errno();
+
+  write_errno(EINVAL);
+  let static_result = clock_gettime(CLOCK_TAI, &raw mut static_ts);
+  let static_errno = read_errno();
+
+  assert_eq!(alias_result, static_result);
+
+  if alias_result == 0 {
+    assert!(alias_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&alias_ts.tv_nsec));
+    assert_eq!(alias_errno, EINVAL);
+
+    assert!(static_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&static_ts.tv_nsec));
+    assert_eq!(static_errno, EINVAL);
+
+    return;
+  }
+
+  assert_eq!(alias_result, -1);
+  assert_eq!(alias_errno, EINVAL);
+  assert_eq!(alias_ts, alias_before);
+  assert_eq!(static_errno, EINVAL);
+  assert_eq!(static_ts, static_before);
+}
+
+#[test]
 fn dynamic_clockid_alias_for_min_fd_after_null_timespec_matches_zero_fd_errno_contract() {
   let mut min_ts = timespec {
     tv_sec: 505,
@@ -504,6 +561,34 @@ fn min_fd_and_zero_fd_alias_after_null_then_invalid_clock_overwrite_errno_with_e
     assert_eq!(read_errno(), EFAULT);
 
     let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
+
+    assert_eq!(invalid_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(invalid_ts, before);
+  }
+}
+
+#[test]
+fn min_fd_and_zero_fd_alias_after_null_then_extreme_negative_invalid_overwrite_errno_with_einval() {
+  let dynamic_clock_ids: [clockid_t; 2] = [fd_to_clockid(c_int::MIN), fd_to_clockid(0)];
+
+  assert_eq!(dynamic_clock_ids[0], dynamic_clock_ids[1]);
+
+  for (index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    let mut invalid_ts = timespec {
+      tv_sec: 930 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 940 + i64::try_from(index).unwrap_or(0),
+    };
+    let before = invalid_ts;
+
+    write_errno(EINVAL);
+
+    let null_result = clock_gettime(*dynamic_clock_id, ptr::null_mut());
+
+    assert_eq!(null_result, -1);
+    assert_eq!(read_errno(), EFAULT);
+
+    let invalid_result = clock_gettime(c_int::MIN, &raw mut invalid_ts);
 
     assert_eq!(invalid_result, -1);
     assert_eq!(read_errno(), EINVAL);

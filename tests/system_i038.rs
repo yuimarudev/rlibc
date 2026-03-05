@@ -788,7 +788,6 @@ fn sysinfo_repeated_success_preserves_enametoolong_from_gethostname_zero_length_
   let mut first_info: SysInfo = unsafe { mem::zeroed() };
   // SAFETY: zero is valid for this C struct because all fields are integer scalars.
   let mut second_info: SysInfo = unsafe { mem::zeroed() };
-
   let first = unsafe { sysinfo(&raw mut first_info) };
   let first_errno = read_errno();
   let second = unsafe { sysinfo(&raw mut second_info) };

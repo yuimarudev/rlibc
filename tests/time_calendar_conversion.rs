@@ -4258,6 +4258,102 @@ fn mktime_max_positive_tm_isdst_hint_min_recovery_path_keeps_errno_thread_local_
 }
 
 #[test]
+fn mktime_max_positive_tm_isdst_hint_matches_tm_isdst_one_during_month_borrow_recovery_at_tm_year_minimum()
+ {
+  let seed = tm {
+    tm_sec: 0,
+    tm_min: 0,
+    tm_hour: 0,
+    tm_mday: 1,
+    tm_mon: -1,
+    tm_year: c_int::MIN + 1,
+    tm_wday: -1,
+    tm_yday: -1,
+    tm_isdst: -1,
+    tm_gmtoff: 17,
+    tm_zone: ptr::dangling(),
+  };
+  let mut isdst_one = tm {
+    tm_isdst: 1,
+    ..seed
+  };
+  let mut isdst_max = tm {
+    tm_isdst: c_int::MAX,
+    ..seed
+  };
+
+  write_errno(642);
+
+  // SAFETY: pointer is valid for the duration of the call.
+  let one_seconds = unsafe { mktime(&raw mut isdst_one) };
+  // SAFETY: pointer is valid for the duration of the call.
+  let max_seconds = unsafe { mktime(&raw mut isdst_max) };
+
+  assert_ne!(one_seconds, -1);
+  assert_ne!(max_seconds, -1);
+  assert_eq!(max_seconds, one_seconds);
+  assert_eq!(read_errno(), 642);
+  assert_eq!(isdst_max, isdst_one);
+  assert_normalized_calendar_metadata(&isdst_max);
+  assert_utc_baseline_output_fields(&isdst_max);
+}
+
+#[test]
+fn mktime_max_positive_tm_isdst_hint_month_borrow_recovery_path_keeps_errno_thread_local_across_threads()
+ {
+  write_errno(983);
+
+  let child_errno = std::thread::spawn(|| {
+    let seed = tm {
+      tm_sec: 0,
+      tm_min: 0,
+      tm_hour: 0,
+      tm_mday: 1,
+      tm_mon: -1,
+      tm_year: c_int::MIN + 1,
+      tm_wday: -1,
+      tm_yday: -1,
+      tm_isdst: -1,
+      tm_gmtoff: 17,
+      tm_zone: ptr::dangling(),
+    };
+    let mut unknown = tm {
+      tm_isdst: 1,
+      ..seed
+    };
+    let mut value = tm {
+      tm_isdst: c_int::MAX,
+      ..seed
+    };
+
+    write_errno(807);
+
+    // SAFETY: pointer is valid for the duration of the call.
+    let unknown_result = unsafe { mktime(&raw mut unknown) };
+    assert_ne!(unknown_result, -1);
+    assert_eq!(read_errno(), 807);
+
+    write_errno(808);
+
+    // SAFETY: pointer is valid for the duration of the call.
+    let result = unsafe { mktime(&raw mut value) };
+
+    assert_eq!(result, unknown_result);
+    assert_eq!(read_errno(), 808);
+    assert_eq!(value, unknown);
+    assert_normalized_calendar_metadata(&value);
+    assert_utc_baseline_output_fields(&value);
+
+    read_errno()
+  })
+  .join()
+  .expect("child thread should not panic");
+
+  assert_eq!(child_errno, 808);
+  assert_eq!(read_errno(), 983);
+}
+
+#[test]
 fn mktime_positive_tm_isdst_hint_can_recover_day_borrow_underflow_at_tm_year_minimum() {
   let mut value = tm {
     tm_sec: 0,

@@ -376,6 +376,24 @@ fn decode_utf8_rejects_corrupted_pending_prefix_then_retries_same_input() {
 }
 
 #[test]
+fn decode_utf8_rejects_corrupted_pending_prefix_then_empty_input_is_clean_initial_state() {
+  let mut state = mbstate_t::new();
+
+  // bytes=[0x80, 0x80, 0, 0], pending_len=2, expected_len=2 (invalid lead byte).
+  write_state_bytes(&mut state, [0x80, 0x80, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00]);
+
+  let first = decode_utf8(&mut state, &[b'A']);
+
+  assert_eq!(first, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+
+  let empty_probe = decode_utf8(&mut state, &[]);
+
+  assert_eq!(empty_probe, Utf8DecodeResult::Incomplete { consumed: 0 });
+  assert!(state.is_initial());
+}
+
+#[test]
 fn decode_utf8_rejects_corrupted_pending_second_byte_bounds_without_consuming_input() {
   let mut state = mbstate_t::new();
 

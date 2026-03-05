@@ -308,6 +308,18 @@ fn kill_with_nonexistent_pid_and_first_out_of_range_signal_returns_einval() {
 }
 
 #[test]
+fn kill_with_extreme_negative_pid_and_invalid_signal_returns_einval() {
+  let _lock = signal_lock();
+
+  write_errno(0);
+
+  let status = kill(c_int::MIN, INVALID_SIGNAL);
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EINVAL);
+}
+
+#[test]
 fn sigaction_rejects_sigkill_even_when_only_querying() {
   let _lock = signal_lock();
   let mut oldact = SigAction::default();

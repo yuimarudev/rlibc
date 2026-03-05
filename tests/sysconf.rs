@@ -1681,6 +1681,34 @@ fn sysconf_nprocessors_onln_repeated_success_preserves_enametoolong_from_gethost
 }
 
 #[test]
+fn sysconf_nprocessors_onln_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure()
+ {
+  set_errno(0);
+
+  // SAFETY: `len == 0` must fail with `ENAMETOOLONG` without dereferencing `name`.
+  let gethostname_result = unsafe { gethostname(core::ptr::null_mut(), 0 as size_t) };
+
+  assert_eq!(gethostname_result, -1);
+  assert_eq!(read_errno(), ENAMETOOLONG);
+
+  let first_online = query(_SC_NPROCESSORS_ONLN);
+  let first_errno = read_errno();
+  let second_online = query(_SC_NPROCESSORS_ONLN);
+  let second_errno = read_errno();
+
+  assert!(first_online > 0, "_SC_NPROCESSORS_ONLN must be positive");
+  assert!(second_online > 0, "_SC_NPROCESSORS_ONLN must be positive");
+  assert_eq!(
+    first_errno, ENAMETOOLONG,
+    "first successful _SC_NPROCESSORS_ONLN query must preserve ENAMETOOLONG",
+  );
+  assert_eq!(
+    second_errno, ENAMETOOLONG,
+    "second successful _SC_NPROCESSORS_ONLN query must preserve ENAMETOOLONG",
+  );
+}
+
+#[test]
 fn sysconf_nprocessors_onln_preserves_efault_from_gethostname_null_failure() {
   set_errno(0);
 

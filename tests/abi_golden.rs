@@ -2608,6 +2608,7 @@ fn abi_check_binary_accepts_class_line_with_crlf_line_endings_in_golden_snapshot
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
   let snapshot_path = unique_temp_snapshot_path("class-line-crlf-line-endings");
   let base_snapshot =
     fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
@@ -2617,9 +2618,12 @@ fn abi_check_binary_accepts_class_line_with_crlf_line_endings_in_golden_snapshot
   fs::write(&snapshot_path, snapshot_contents)
     .expect("class-line-crlf-line-endings golden snapshot fixture write must succeed");
 
+  build_release_cdylib();
+
   let output = Command::new(&abi_check_path)
     .arg("--golden")
     .arg(&snapshot_path)
+    .arg(&library_path)
     .current_dir(repository_file("."))
     .output()
     .expect("failed to execute abi_check binary");
@@ -2637,6 +2641,51 @@ fn abi_check_binary_accepts_class_line_with_crlf_line_endings_in_golden_snapshot
   assert!(
     stdout.contains("Golden ABI snapshot matched"),
     "abi_check stdout must report successful golden snapshot matching for CRLF ELF_CLASS metadata line ending\nstdout:\n{stdout}",
+  );
+}
+
+#[test]
+fn abi_check_binary_accepts_machine_line_with_crlf_line_endings_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
+  let snapshot_path = unique_temp_snapshot_path("machine-line-crlf-line-endings");
+  let base_snapshot =
+    fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+      .expect("reference golden snapshot must be readable");
+  let snapshot_contents = base_snapshot.replacen(
+    "ELF_MACHINE=Advanced Micro Devices X86-64\n",
+    "ELF_MACHINE=Advanced Micro Devices X86-64\r\n",
+    1,
+  );
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("machine-line-crlf-line-endings golden snapshot fixture write must succeed");
+
+  build_release_cdylib();
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .arg(&library_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    output.status.success(),
+    "abi_check must accept snapshots with CRLF ELF_MACHINE metadata line endings\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stdout.contains("Golden ABI snapshot matched"),
+    "abi_check stdout must report successful golden snapshot matching for CRLF ELF_MACHINE metadata line ending\nstdout:\n{stdout}",
   );
 }
 
@@ -2923,6 +2972,33 @@ fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_path_value() 
 }
 
 #[test]
+fn abi_check_binary_rejects_tab_prefixed_option_like_golden_path_value() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg("\t--bogus")
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject tab-prefixed option-like token used as --golden value\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("missing value for --golden"),
+    "abi_check stderr must explain rejection for tab-prefixed option-like --golden values\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
 fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_equals_value() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
@@ -2945,6 +3021,32 @@ fn abi_check_binary_rejects_whitespace_prefixed_option_like_golden_equals_value(
   assert!(
     stderr.contains("missing value for --golden"),
     "abi_check stderr must explain rejection for whitespace-prefixed option-like --golden=<...> values\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
+fn abi_check_binary_rejects_tab_prefixed_option_like_golden_equals_value() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let output = Command::new(&abi_check_path)
+    .arg("--golden=\t--bogus")
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject tab-prefixed option-like --golden=<...> values\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("missing value for --golden"),
+    "abi_check stderr must explain rejection for tab-prefixed option-like --golden=<...> values\nstderr:\n{stderr}",
   );
 }
 

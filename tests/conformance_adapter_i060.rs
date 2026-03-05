@@ -536,6 +536,40 @@ fn adapter_accepts_nested_workload_path_for_supported_prefixes() {
 }
 
 #[test]
+fn adapter_rejects_multiple_split_w_workload_pairs_with_invalid_later_workload() {
+  let commands = [
+    "runtest -w functional/argv -w functional/../ctype",
+    "./runtest -w functional/argv -w functional/../ctype",
+    "bin/runtest -w functional/argv -w functional/../ctype",
+    "./bin/runtest -w functional/argv -w functional/../ctype",
+  ];
+
+  for (index, command) in commands.iter().enumerate() {
+    let temp_dir = TempDirGuard::new(&format!(
+      "i060-runtest-multi-pair-invalid-later-workload-{index}"
+    ));
+    let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+
+    write_text(&manifest_path, &format!("case-a|{command}\n"));
+
+    let arguments = vec![
+      "--dry-run".to_string(),
+      "--profile".to_string(),
+      manifest_path.to_string_lossy().into_owned(),
+    ];
+    let output = run_adapter(&arguments);
+    let stderr = stderr_text(&output);
+
+    assert!(
+      !output.status.success(),
+      "multiple -w pairs with invalid later workload must fail: {command}"
+    );
+    assert!(stderr.contains("runtest smoke command requires explicit arguments"));
+    assert!(stderr.contains("line 1"));
+  }
+}
+
+#[test]
 fn adapter_rejects_runtest_prefix_without_arguments() {
   let temp_dir = TempDirGuard::new("i060-runtest-no-args");
   let manifest_path = temp_dir.path().join("libc-test-smoke.txt");

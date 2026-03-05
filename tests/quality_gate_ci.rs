@@ -2,6 +2,7 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn repository_root() -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -12,6 +13,15 @@ fn read_repository_file(relative_path: &str) -> String {
 
   fs::read_to_string(&path)
     .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+fn run_quality_gate_script_with_args(args: &[&str]) -> std::process::Output {
+  Command::new("bash")
+    .arg("scripts/quality-gate.sh")
+    .args(args)
+    .current_dir(repository_root())
+    .output()
+    .unwrap_or_else(|error| panic!("failed to run quality-gate.sh with args {args:?}: {error}"))
 }
 
 fn extract_function_body_lines(script: &str, signature_line: &str) -> Vec<String> {
@@ -1159,6 +1169,30 @@ fn quality_gate_script_usage_mentions_invalid_option_exit_status() {
 }
 
 #[test]
+fn quality_gate_script_unknown_option_runtime_exits_with_status_two() {
+  let unknown_option = "--definitely-unknown-option";
+  let output = run_quality_gate_script_with_args(&[unknown_option]);
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+
+  assert_eq!(
+    output.status.code(),
+    Some(2),
+    "unknown option runtime contract must exit with status 2"
+  );
+  assert!(
+    stderr.contains(&format!(
+      "[quality-gate] failed: unknown argument: {unknown_option}"
+    )),
+    "unknown option runtime contract must print parse failure in stderr, got: {stderr}"
+  );
+  assert!(
+    stdout.contains("Usage: bash scripts/quality-gate.sh"),
+    "unknown option runtime contract must include usage text for diagnostics, got: {stdout}"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_mentions_duplicate_profile_rejection_for_both_forms() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let required_snippet =
@@ -1918,6 +1952,22 @@ fn command_uses_supported_runtest_prefix_accepts_multiple_split_w_workload_pairs
 }
 
 #[test]
+fn command_uses_supported_runtest_prefix_rejects_invalid_later_workload_pair_for_allowed_prefixes()
+{
+  for command in [
+    "runtest -w functional/argv -w functional//ctype",
+    "./runtest -w math/sin -w ./math/cos",
+    "bin/runtest -w string/memcpy -w /string/memmove",
+    "./bin/runtest -w stdio/fprintf -w stdio/",
+  ] {
+    assert!(
+      !command_uses_supported_runtest_prefix(command),
+      "invalid later -w workload pair must be rejected for supported runtest prefixes: {command}"
+    );
+  }
+}
+
+#[test]
 fn command_uses_supported_runtest_prefix_accepts_nested_workload_path_for_supported_prefixes() {
   for command in [
     "runtest -w functional/stdio/vfprintf",
@@ -1928,6 +1978,22 @@ fn command_uses_supported_runtest_prefix_accepts_nested_workload_path_for_suppor
     assert!(
       command_uses_supported_runtest_prefix(command),
       "nested workload path must remain valid for supported runtest prefixes: {command}"
+    );
+  }
+}
+
+#[test]
+fn command_uses_supported_runtest_prefix_rejects_multiple_split_w_workload_pairs_with_invalid_later_workload()
+ {
+  for command in [
+    "runtest -w functional/argv -w functional/../ctype",
+    "./runtest -w functional/argv -w functional/../ctype",
+    "bin/runtest -w functional/argv -w functional/../ctype",
+    "./bin/runtest -w functional/argv -w functional/../ctype",
+  ] {
+    assert!(
+      !command_uses_supported_runtest_prefix(command),
+      "multiple -w pairs with invalid later workload must be rejected by manifest contract helper: {command}"
     );
   }
 }

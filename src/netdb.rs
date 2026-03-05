@@ -1265,6 +1265,24 @@ mod tests {
   }
 
   #[test]
+  fn parse_service_port_resolves_domain_without_ai_numericserv_for_udp() {
+    let service = CString::new("domain").expect("literal must be NUL-free");
+    let parsed = parse_service_port(service.as_ptr(), 0, IPPROTO_UDP)
+      .expect("domain should resolve for UDP when AI_NUMERICSERV is not set");
+
+    assert_eq!(parsed, 53);
+  }
+
+  #[test]
+  fn parse_service_port_resolves_domain_without_ai_numericserv_for_tcp() {
+    let service = CString::new("domain").expect("literal must be NUL-free");
+    let parsed = parse_service_port(service.as_ptr(), 0, IPPROTO_TCP)
+      .expect("domain should resolve for TCP when AI_NUMERICSERV is not set");
+
+    assert_eq!(parsed, 53);
+  }
+
+  #[test]
   fn parse_service_port_rejects_http_with_ai_numericserv() {
     let service = CString::new("http").expect("literal must be NUL-free");
     let error = parse_service_port(service.as_ptr(), AI_NUMERICSERV, IPPROTO_TCP)

@@ -2925,6 +2925,59 @@ fn setlocale_empty_lc_all_with_all_category_variables_empty_and_supported_lang_p
 }
 
 #[test]
+fn setlocale_empty_category_locale_with_all_category_variables_empty_and_unsupported_lang_rejection_then_query_preserves_errno_for_all_categories()
+ {
+  let _env_lock = lock_locale_environment();
+  let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
+
+  for &(category, variable) in &CATEGORY_VARIABLES {
+    clear_locale_environment();
+    set_locale_environment("LC_ALL", "");
+
+    for &(_, category_variable) in &CATEGORY_VARIABLES {
+      set_locale_environment(category_variable, "");
+    }
+
+    set_locale_environment("LANG", "en_US.UTF-8");
+
+    // SAFETY: argument points to a valid NUL-terminated locale string.
+    let baseline_ptr = unsafe { setlocale(category, as_c_ptr(b"C\0")) };
+
+    assert!(
+      !baseline_ptr.is_null(),
+      "category {category} should accept baseline C locale before all-empty category variables + unsupported LANG rejection checks ({variable})",
+    );
+
+    let rejection_errno = 5250 + category;
+
+    write_errno(rejection_errno);
+
+    // SAFETY: argument points to a valid NUL-terminated locale string (`""`).
+    let rejected_ptr = unsafe { setlocale(category, as_c_ptr(b"\0")) };
+
+    assert!(
+      rejected_ptr.is_null(),
+      "category {category} should reject empty locale resolution when all category variables are empty and LANG is unsupported ({variable})",
+    );
+    assert_eq!(read_errno(), rejection_errno);
+
+    let query_errno = 5260 + category;
+
+    write_errno(query_errno);
+
+    // SAFETY: null query is valid per `setlocale` contract.
+    let query_ptr = unsafe { setlocale(category, ptr::null()) };
+
+    assert!(
+      !query_ptr.is_null(),
+      "category {category} query should stay available after unsupported LANG rejection with all category variables empty ({variable})",
+    );
+    assert_eq!(locale_name(query_ptr), b"C");
+    assert_eq!(read_errno(), query_errno);
+  }
+}
+
+#[test]
 fn setlocale_empty_lc_all_with_unsupported_lc_all_and_supported_category_variables_rejection_then_query_preserves_errno()
  {
   let _env_lock = lock_locale_environment();
