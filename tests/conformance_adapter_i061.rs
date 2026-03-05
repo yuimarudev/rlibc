@@ -1871,6 +1871,56 @@ fn adapter_rejects_directory_results_file_even_when_later_results_file_is_valid_
 }
 
 #[test]
+fn adapter_rejects_directory_results_file_before_suite_root_even_when_later_results_file_is_valid_and_before_later_unknown_argument()
+ {
+  let temp_dir = TempDirGuard::new(
+    "i061-results-directory-before-suite-root-even-when-later-valid-before-unknown",
+  );
+  let suite_root = temp_dir.path().join("suite-root");
+  let results_dir = suite_root.join("results");
+  let valid_results = suite_root.join("results-valid/ltp-results.txt");
+  let marker = temp_dir.path().join(
+    "suite-command-ran-directory-before-suite-root-even-when-later-valid-before-unknown.marker",
+  );
+
+  fs::create_dir_all(&results_dir).unwrap_or_else(|error| {
+    panic!(
+      "failed to create suite results directory {}: {error}",
+      results_dir.display()
+    )
+  });
+  write_text(&valid_results, "PASS valid.case\n");
+
+  let arguments = vec![
+    "--suite".to_string(),
+    "ltp".to_string(),
+    "--results-file".to_string(),
+    results_dir.to_string_lossy().into_owned(),
+    "--suite-root".to_string(),
+    suite_root.to_string_lossy().into_owned(),
+    "--results-file".to_string(),
+    valid_results.to_string_lossy().into_owned(),
+    "--unknown-after-invalid-results-file".to_string(),
+    "--".to_string(),
+    "touch".to_string(),
+    marker.to_string_lossy().into_owned(),
+  ];
+  let output = run_adapter(&arguments);
+  let stderr = stderr_text(&output);
+
+  assert!(!output.status.success());
+  assert!(stderr.contains("results file path must reference a regular file"));
+  assert!(
+    !stderr.contains("unknown argument"),
+    "directory-path preflight error should win over later unknown argument"
+  );
+  assert!(
+    !marker.exists(),
+    "suite command must not run when any earlier --results-file points to a directory"
+  );
+}
+
+#[test]
 fn adapter_rejects_results_file_with_trailing_slash_before_running_suite_command() {
   let temp_dir = TempDirGuard::new("i061-results-trailing-slash");
   let suite_root = temp_dir.path().join("suite-root");

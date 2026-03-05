@@ -254,8 +254,18 @@ fn parse_args(args: &[String]) -> Result<Action, String> {
         if let Some(next) = args.get(index + 1) {
           if next == "--" {
             if let Some(value) = args.get(index + 2) {
+              if value.is_empty() {
+                return Err(
+                  "--strict-xpass does not take a value: empty value is not allowed".to_string(),
+                );
+              }
+
               return Err(format!("--strict-xpass does not take a value: `{value}`"));
             }
+          } else if next.is_empty() {
+            return Err(
+              "--strict-xpass does not take a value: empty value is not allowed".to_string(),
+            );
           } else if !is_option_like_token(next) {
             return Err(format!("--strict-xpass does not take a value: `{next}`"));
           }

@@ -905,6 +905,69 @@ fn accept_nonblocking_without_pending_connection_with_null_addr_and_non_null_add
 }
 
 #[test]
+fn accept_nonblocking_without_pending_connection_with_null_addr_and_non_null_addrlen_overwrites_errno_with_eagain()
+ {
+  let socket_path = unique_socket_path();
+  let address = sockaddr_un_for_path(&socket_path);
+  let address_len = to_socklen(core::mem::size_of::<SockaddrUn>());
+  let expected_len = address_len;
+  let mut peer_len = expected_len;
+
+  cleanup_socket_path(&socket_path);
+
+  // SAFETY: arguments follow Linux `socket(2)` contract for AF_UNIX stream sockets.
+  let server_fd = unsafe { socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0) };
+
+  assert!(
+    server_fd >= 0,
+    "socket(server null addr, non-null addrlen overwrite errno) failed with errno={}",
+    errno_value()
+  );
+
+  // SAFETY: `address` points to initialized `sockaddr_un` data.
+  let bind_result = unsafe {
+    bind(
+      server_fd,
+      core::ptr::addr_of!(address).cast::<Sockaddr>(),
+      address_len,
+    )
+  };
+
+  assert_eq!(bind_result, 0, "bind failed with errno={}", errno_value());
+
+  // SAFETY: `server_fd` is a valid socket descriptor.
+  let listen_result = unsafe { listen(server_fd, 8) };
+
+  assert_eq!(
+    listen_result,
+    0,
+    "listen failed with errno={}",
+    errno_value()
+  );
+
+  set_errno(EADDRINUSE);
+  // SAFETY: null addr with writable addrlen pointer is a valid call form.
+  let accept_result = unsafe {
+    accept(
+      server_fd,
+      core::ptr::null_mut(),
+      core::ptr::addr_of_mut!(peer_len),
+    )
+  };
+  let accept_errno = errno_value();
+
+  close_fd(server_fd);
+  cleanup_socket_path(&socket_path);
+
+  assert_eq!(accept_result, -1);
+  assert_eq!(accept_errno, EAGAIN);
+  assert_eq!(
+    peer_len, expected_len,
+    "accept should not modify addrlen when addr is null on nonblocking no-pending path"
+  );
+}
+
+#[test]
 fn socket_with_sock_nonblock_sets_nonblocking_flag() {
   // SAFETY: arguments follow Linux `socket(2)` contract for AF_UNIX stream sockets.
   let fd = unsafe { socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0) };

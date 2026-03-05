@@ -554,6 +554,45 @@ fn dynamic_clockid_alias_set_after_invalid_clock_id_keeps_errno_einval() {
 }
 
 #[test]
+fn dynamic_clockid_alias_min_and_zero_after_invalid_clock_id_keep_errno_einval() {
+  let dynamic_clock_ids: [clockid_t; 2] = [fd_to_clockid(c_int::MIN), fd_to_clockid(0)];
+
+  assert_eq!(dynamic_clock_ids[0], dynamic_clock_ids[1]);
+
+  for (index, dynamic_clock_id) in dynamic_clock_ids.iter().enumerate() {
+    let mut invalid_ts = timespec {
+      tv_sec: 10_000 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 11_000 + i64::try_from(index).unwrap_or(0),
+    };
+    let mut dynamic_ts = timespec {
+      tv_sec: 12_000 + i64::try_from(index).unwrap_or(0),
+      tv_nsec: 13_000 + i64::try_from(index).unwrap_or(0),
+    };
+    let dynamic_before = dynamic_ts;
+
+    write_errno(0);
+
+    let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
+
+    assert_eq!(invalid_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+
+    let dynamic_result = clock_gettime(*dynamic_clock_id, &raw mut dynamic_ts);
+
+    if dynamic_result == 0 {
+      assert!(dynamic_ts.tv_sec >= 0);
+      assert!((0..1_000_000_000).contains(&dynamic_ts.tv_nsec));
+      assert_eq!(read_errno(), EINVAL);
+      continue;
+    }
+
+    assert_eq!(dynamic_result, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(dynamic_ts, dynamic_before);
+  }
+}
+
+#[test]
 fn clock_gettime_all_exported_clock_ids_follow_kernel_errno_contract() {
   let clock_ids: [clockid_t; 12] = [
     CLOCK_REALTIME,

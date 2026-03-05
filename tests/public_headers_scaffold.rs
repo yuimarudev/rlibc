@@ -367,6 +367,12 @@ fn prefix_is_control_statement_context(prefix: &str) -> bool {
   false
 }
 
+fn prefix_is_label_statement_context(prefix: &str) -> bool {
+  let trimmed = prefix.trim_end();
+
+  trimmed.ends_with(':') && !trimmed.contains('?')
+}
+
 fn symbol_in_function_pointer_declarator(bytes: &[u8], symbol_start: usize) -> bool {
   let mut cursor = symbol_start;
 
@@ -724,6 +730,7 @@ fn line_declares_function_symbol(line: &str, symbol: &str) -> bool {
       Some("return" | "if" | "while" | "for" | "switch" | "sizeof" | "case" | "do")
     );
     let is_control_statement_context = prefix_is_control_statement_context(prefix);
+    let is_label_statement_context = prefix_is_label_statement_context(prefix);
     let in_function_pointer_declarator = symbol_in_function_pointer_declarator(bytes, start);
     let in_member_access_expression = symbol_in_member_access_expression(bytes, start);
     let in_ternary_expression = prefix_has_ternary_question(prefix);
@@ -742,6 +749,7 @@ fn line_declares_function_symbol(line: &str, symbol: &str) -> bool {
       || has_assignment_before_symbol
       || is_statement_context
       || is_control_statement_context
+      || is_label_statement_context
       || in_function_pointer_declarator
       || in_member_access_expression
       || in_ternary_expression

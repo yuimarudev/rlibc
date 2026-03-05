@@ -1216,6 +1216,44 @@ fn unsetenv_empty_name_preserves_putenv_alias_and_sets_errno() {
 }
 
 #[test]
+fn unsetenv_empty_name_i016_preserves_rebound_empty_putenv_alias_and_sets_errno() {
+  let _env = EnvScope::new();
+  let tracked_name = c_string("RLIBC_I016_UNSETENV_EMPTY_REBOUND_EMPTY_ALIAS");
+  let empty_name = c_string("");
+  let prefix = b"RLIBC_I016_UNSETENV_EMPTY_REBOUND_EMPTY_ALIAS=";
+  let mut first = b"RLIBC_I016_UNSETENV_EMPTY_REBOUND_EMPTY_ALIAS=alpha\0".to_vec();
+  let mut second = b"RLIBC_I016_UNSETENV_EMPTY_REBOUND_EMPTY_ALIAS=\0\0".to_vec();
+
+  write_errno(69);
+
+  // SAFETY: `first` is mutable and NUL-terminated for C.
+  let first_put_result = unsafe { putenv(first.as_mut_ptr().cast()) };
+  // SAFETY: `second` is mutable and NUL-terminated for C.
+  let second_put_result = unsafe { putenv(second.as_mut_ptr().cast()) };
+
+  assert_eq!(first_put_result, 0);
+  assert_eq!(second_put_result, 0);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  // SAFETY: `empty_name` is a valid empty NUL-terminated string.
+  let unset_result = unsafe { unsetenv(empty_name.as_ptr()) };
+
+  assert_eq!(unset_result, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  let value_start = prefix.len();
+
+  first[value_start..value_start + 5].copy_from_slice(b"omega");
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(Vec::new()));
+
+  second[value_start] = b'z';
+
+  assert_eq!(getenv_bytes(&tracked_name), Some(b"z".to_vec()));
+}
+
+#[test]
 fn unsetenv_null_name_preserves_putenv_alias_and_sets_errno() {
   let _env = EnvScope::new();
   let tracked_name = c_string("RLIBC_I017_UNSETENV_NULL_ALIAS");

@@ -1342,6 +1342,45 @@ fn fstatat_absolute_missing_path_with_empty_path_flag_ignores_dirfd_and_sets_eno
 }
 
 #[test]
+fn fstatat_absolute_missing_path_with_empty_path_flag_and_null_output_sets_enoent() {
+  let temp_dir = TempDir::new();
+  let missing_path = temp_dir
+    .path()
+    .join("missing_absolute_path_with_empty_flag_null_output.txt");
+  let missing_path_c = path_to_c_string(&missing_path);
+
+  write_errno(EINVAL);
+
+  // SAFETY: absolute path pointer is valid; missing-path resolution fails before output pointer use.
+  let empty_path_flag_rc = unsafe {
+    fstatat(
+      -1,
+      missing_path_c.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(empty_path_flag_rc, -1);
+  assert_eq!(read_errno(), ENOENT);
+
+  write_errno(EBADF);
+
+  // SAFETY: absolute path pointer is valid; missing-path resolution fails before output pointer use.
+  let combined_flags_rc = unsafe {
+    fstatat(
+      -1,
+      missing_path_c.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(combined_flags_rc, -1);
+  assert_eq!(read_errno(), ENOENT);
+}
+
+#[test]
 fn fstatat_absolute_missing_path_ignores_non_directory_dirfd() {
   let temp_dir = TempDir::new();
   let non_directory_path = temp_dir.path().join("not_a_directory_fd.txt");

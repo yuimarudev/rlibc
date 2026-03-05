@@ -445,6 +445,86 @@ SYMBOLS:
 }
 
 #[test]
+fn abi_check_binary_rejects_symbol_entries_with_trailing_space_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("trailing-space-symbol");
+  let snapshot_contents = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:
+memcpy 
+";
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("trailing-space-symbol golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject symbol entries with trailing spaces\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("invalid symbol entry with surrounding whitespace"),
+    "abi_check stderr must explain trailing-space symbol rejection\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
+fn abi_check_binary_rejects_symbol_entries_with_trailing_tab_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let snapshot_path = unique_temp_snapshot_path("trailing-tab-symbol");
+  let snapshot_contents = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:
+memcpy\t
+";
+
+  fs::write(&snapshot_path, snapshot_contents)
+    .expect("trailing-tab-symbol golden snapshot fixture write must succeed");
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    !output.status.success(),
+    "abi_check must reject symbol entries with trailing tabs\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stderr.contains("invalid symbol entry with surrounding whitespace"),
+    "abi_check stderr must explain trailing-tab symbol rejection\nstderr:\n{stderr}",
+  );
+}
+
+#[test]
 fn abi_check_binary_rejects_empty_line_inside_symbols_block_in_golden_snapshot() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)

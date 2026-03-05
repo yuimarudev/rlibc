@@ -1435,6 +1435,7 @@ fn pthread_unknown_probe_does_not_break_native_detached_post_exit_state() {
     let Some(next_candidate) = unknown_candidate.checked_add(1) else {
       panic!("pthread_t second id increment overflowed unexpectedly");
     };
+
     unknown_candidate = next_candidate;
   }
 

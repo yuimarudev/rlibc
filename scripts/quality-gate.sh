@@ -56,6 +56,7 @@ Options:
   --continue-on-fail  keep running remaining profile steps and exit non-zero at end if any step failed (flag only; no value)
                      equals-style values are rejected (for example: --continue-on-fail=1)
                      duplicate options are rejected (for example: repeated --profile or --continue-on-fail)
+                     duplicate --continue-on-fail is rejected when the flag is repeated
                      default: stop on first failed step
   -h, --help         show this help and exit
   --                end option parsing (positional args are rejected)

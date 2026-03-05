@@ -951,12 +951,12 @@ fn memmove_u128_boundary_overlap_cases_match_manual_temporary() {
     (17, 1, 15),
     (17, 1, 16),
     (17, 1, 17),
-    (3, 19, 31),
-    (3, 19, 32),
-    (3, 19, 33),
-    (19, 3, 31),
-    (19, 3, 32),
-    (19, 3, 33),
+    (3, 15, 31),
+    (3, 16, 32),
+    (3, 15, 33),
+    (15, 3, 31),
+    (16, 3, 32),
+    (15, 3, 33),
   ];
 
   for (source_offset, destination_offset, copy_len) in cases {

@@ -1046,8 +1046,7 @@ fn quality_gate_script_usage_mentions_duplicate_option_rejection() {
 #[test]
 fn quality_gate_script_usage_mentions_duplicate_continue_on_fail_rejection_for_flag_form() {
   let script = read_repository_file("scripts/quality-gate.sh");
-  let required_snippet =
-    "duplicate --continue-on-fail is rejected when the flag is repeated";
+  let required_snippet = "duplicate --continue-on-fail is rejected when the flag is repeated";
 
   assert!(
     script.contains(required_snippet),

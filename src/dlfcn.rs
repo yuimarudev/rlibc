@@ -148,6 +148,7 @@ impl DlHandleRegistry {
 
       return;
     }
+    self.clear_trackable_null_handle_entry();
 
     let handle_id = handle as usize;
     let Some(next_after_handle) = handle_id.checked_add(1) else {
@@ -1693,6 +1694,24 @@ mod tests {
   }
 
   #[test]
+  fn register_open_handle_non_null_cleans_trackable_zero_entry_and_tracks_real_handle() {
+    let mut registry = DlHandleRegistry::new();
+    let tracked_handle = 0xD8usize as *mut c_void;
+
+    registry
+      .handles
+      .insert(TRACKABLE_NULL_HANDLE_ID, DlHandleState::Closed);
+
+    registry.register_open_handle(tracked_handle);
+
+    assert_eq!(registry.handle_state(TRACKABLE_NULL_HANDLE_ID), None);
+    assert_eq!(
+      registry.handle_state(tracked_handle as usize),
+      Some(DlHandleState::Open { refcount: 1 })
+    );
+  }
+
+  #[test]
   fn register_open_handle_with_max_handle_updates_existing_entry() {
     let mut registry = DlHandleRegistry::new();
     let max_handle = usize::MAX as *mut c_void;
@@ -2025,6 +2044,16 @@ mod tests {
     assert_eq!(
       io_error_errno(&error, ENOENT),
       crate::abi::errno::EHOSTUNREACH
+    );
+  }
+
+  #[test]
+  fn io_error_errno_maps_in_progress_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::InProgress, "in progress");
+
+    assert_eq!(
+      io_error_errno(&error, ENOENT),
+      crate::abi::errno::EINPROGRESS
     );
   }
 

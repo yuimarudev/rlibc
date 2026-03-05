@@ -2257,6 +2257,77 @@ fn pthread_mutex_destroy_stays_ebusy_after_single_signal_while_second_waiter_is_
 }
 
 #[test]
+fn pthread_mutex_destroy_stays_ebusy_after_single_signal_while_second_recursive_waiter_is_blocked()
+{
+  let mut mutex = init_recursive_mutex();
+  let mut cond = init_cond();
+  let mutex_addr = (&raw mut mutex) as usize;
+  let cond_addr = (&raw mut cond) as usize;
+  let (started_tx, started_rx) = mpsc::channel();
+  let (woke_tx, woke_rx) = mpsc::channel();
+
+  thread::scope(|scope| {
+    for _ in 0..2 {
+      let started_tx = started_tx.clone();
+      let woke_tx = woke_tx.clone();
+
+      scope.spawn(move || {
+        let mutex_ptr = mutex_addr as *mut pthread_mutex_t;
+        let cond_ptr = cond_addr as *mut pthread_cond_t;
+
+        assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+        assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+        started_tx
+          .send(())
+          .expect("failed to send waiter start signal");
+        assert_eq!(pthread_cond_wait(cond_ptr, mutex_ptr), 0);
+        assert_eq!(pthread_mutex_unlock(mutex_ptr), 0);
+        assert_eq!(
+          pthread_mutex_unlock(mutex_ptr),
+          0,
+          "recursive cond-wait waiter must restore recursive depth after wake",
+        );
+        woke_tx.send(()).expect("failed to send wake signal");
+      });
+    }
+
+    started_rx.recv().expect("first waiter did not start");
+    started_rx.recv().expect("second waiter did not start");
+
+    assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+    assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+    assert_eq!(
+      pthread_mutex_destroy(&raw mut mutex),
+      EBUSY,
+      "destroy must fail while two recursive cond-wait waiters reference mutex state",
+    );
+
+    assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+    assert_eq!(pthread_cond_signal(&raw mut cond), 0);
+    assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+
+    woke_rx
+      .recv()
+      .expect("first recursive waiter did not wake after signal");
+    assert_eq!(
+      pthread_mutex_destroy(&raw mut mutex),
+      EBUSY,
+      "destroy must remain busy while another recursive cond-wait waiter stays blocked",
+    );
+
+    assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+    assert_eq!(pthread_cond_broadcast(&raw mut cond), 0);
+    assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+    woke_rx
+      .recv()
+      .expect("second recursive waiter did not wake after broadcast");
+  });
+
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_destroy(&raw mut mutex), 0);
+}
+
+#[test]
 fn pthread_mutex_destroy_stays_ebusy_after_single_signal_while_second_zero_initialized_cond_waiter_is_blocked()
  {
   let mut mutex = init_mutex();
@@ -2365,6 +2436,54 @@ fn pthread_mutex_destroy_succeeds_after_recursive_cond_wait_signal_releases_refe
     pthread_mutex_destroy(&raw mut mutex),
     0,
     "recursive signal wake path must release mutex reference once waiter returns",
+  );
+}
+
+#[test]
+fn pthread_mutex_destroy_succeeds_after_zero_initialized_recursive_cond_wait_signal_releases_reference()
+ {
+  let mut mutex = init_recursive_mutex();
+  let mut cond = pthread_cond_t::default();
+  let mutex_addr = (&raw mut mutex) as usize;
+  let cond_addr = (&raw mut cond) as usize;
+  let (started_tx, started_rx) = mpsc::channel();
+  let waiter = thread::spawn(move || {
+    let mutex_ptr = mutex_addr as *mut pthread_mutex_t;
+    let cond_ptr = cond_addr as *mut pthread_cond_t;
+
+    assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+    assert_eq!(pthread_mutex_lock(mutex_ptr), 0);
+    started_tx
+      .send(())
+      .expect("failed to send waiter start signal");
+    assert_eq!(pthread_cond_wait(cond_ptr, mutex_ptr), 0);
+    assert_eq!(pthread_mutex_unlock(mutex_ptr), 0);
+    assert_eq!(
+      pthread_mutex_unlock(mutex_ptr),
+      0,
+      "zero-initialized recursive cond-wait waiter must restore recursive depth after wake",
+    );
+  });
+
+  started_rx.recv().expect("waiter did not start");
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+  assert_eq!(
+    pthread_mutex_destroy(&raw mut mutex),
+    EBUSY,
+    "destroy must fail while zero-initialized recursive cond-wait keeps a live mutex reference",
+  );
+
+  assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);
+  assert_eq!(pthread_cond_signal(&raw mut cond), 0);
+  assert_eq!(pthread_mutex_unlock(&raw mut mutex), 0);
+
+  waiter.join().expect("waiter thread panicked");
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
+  assert_eq!(
+    pthread_mutex_destroy(&raw mut mutex),
+    0,
+    "zero-initialized recursive signal wake path must release mutex reference once waiter returns",
   );
 }
 

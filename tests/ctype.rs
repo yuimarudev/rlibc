@@ -559,6 +559,17 @@ fn isascii_matches_toascii_fixed_point_relation_across_dense_signed_range() {
 }
 
 #[test]
+fn toascii_matches_rem_euclid_projection_for_dense_signed_range() {
+  for probe in -4096..=4096 {
+    assert_eq!(
+      toascii(probe),
+      probe.rem_euclid(128),
+      "toascii rem_euclid projection mismatch for probe={probe}"
+    );
+  }
+}
+
+#[test]
 fn isascii_and_toascii_do_not_modify_errno() {
   let sentinels = [0, 17, 913, c_int::MAX];
   let boundary_probes = [c_int::MIN, -4096, -2, EOF_C_INT, 256, 4096, c_int::MAX];
