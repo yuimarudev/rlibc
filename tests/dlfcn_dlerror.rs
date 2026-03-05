@@ -1626,6 +1626,83 @@ fn dlerror_missing_path_pending_message_survives_successful_dlopen_and_preserves
 }
 
 #[test]
+fn dlerror_missing_path_pending_message_survives_successful_lazy_dlopen_and_preserves_errno() {
+  clear_pending_dlerror();
+
+  let missing_path = c_string(
+    "/definitely/missing/rlibc_i055_missing_path_pending_survives_successful_lazy_dlopen.so",
+  );
+
+  // SAFETY: `missing_path` is a valid NUL-terminated C string.
+  let missing_handle = unsafe { dlopen(missing_path.as_ptr().cast::<c_char>(), RTLD_NOW) };
+
+  assert!(missing_handle.is_null(), "missing path must fail");
+
+  let failure_errno = read_errno();
+
+  assert_ne!(
+    failure_errno, 0,
+    "missing-path dlopen failure should set a non-zero errno",
+  );
+
+  let shared_object_path =
+    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
+  let shared_object_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
+    .expect("shared object path must not contain interior NUL");
+
+  // SAFETY: `shared_object_cstr` is a valid NUL-terminated C string.
+  let success_handle = unsafe { dlopen(shared_object_cstr.as_ptr().cast::<c_char>(), RTLD_LAZY) };
+
+  assert!(
+    !success_handle.is_null(),
+    "dlopen should succeed for loaded shared object: {}",
+    shared_object_path.display(),
+  );
+  assert_eq!(
+    read_errno(),
+    failure_errno,
+    "successful lazy dlopen must preserve errno while pending missing-path dlerror exists",
+  );
+
+  let message = take_dlerror_message()
+    .expect("successful lazy dlopen should not clear pending missing-path dlerror");
+
+  assert!(
+    message.contains("target path could not be opened"),
+    "unexpected preserved dlerror message: {message}",
+  );
+  assert!(
+    message.contains("missing_path_pending_survives_successful_lazy_dlopen"),
+    "preserved message should include missing-path detail: {message}",
+  );
+  assert_eq!(
+    read_errno(),
+    failure_errno,
+    "reading pending dlerror must preserve errno",
+  );
+  assert!(
+    take_dlerror_message().is_none(),
+    "second dlerror call must clear pending state",
+  );
+  assert_eq!(
+    read_errno(),
+    failure_errno,
+    "clearing pending dlerror must preserve errno",
+  );
+
+  assert_eq!(
+    dlclose(success_handle),
+    0,
+    "dlclose should release test handle"
+  );
+  assert_eq!(
+    read_errno(),
+    failure_errno,
+    "successful dlclose must preserve errno"
+  );
+}
+
+#[test]
 fn dlerror_missing_path_failure_read_and_clear_preserve_overwritten_errno() {
   clear_pending_dlerror();
 

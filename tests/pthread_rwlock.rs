@@ -367,6 +367,7 @@ fn pthread_rwlock_reinit_with_raw_attr_after_destroy_preserves_rwlock_semantics(
   let first_destroy = unsafe { pthread_rwlock_destroy(rwlock_ptr) };
 
   assert_eq!(first_destroy, 0);
+
   let attr = pthread_rwlockattr_t {
     __size: [
       0x6B_u8, 0x2D_u8, 0xE0_u8, 0x91_u8, 0x02_u8, 0x00_u8, 0x00_u8, 0x00_u8,

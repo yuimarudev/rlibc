@@ -2645,6 +2645,7 @@ fn abi_check_binary_accepts_trailing_crlf_empty_line_after_symbols_block_in_gold
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
   let snapshot_path = unique_temp_snapshot_path("trailing-crlf-empty-line-after-symbols-block");
   let base_snapshot =
     fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
@@ -2657,9 +2658,12 @@ fn abi_check_binary_accepts_trailing_crlf_empty_line_after_symbols_block_in_gold
     "trailing-crlf-empty-line-after-symbols-block golden snapshot fixture write must succeed",
   );
 
+  build_release_cdylib();
+
   let output = Command::new(&abi_check_path)
     .arg("--golden")
     .arg(&snapshot_path)
+    .arg(&library_path)
     .current_dir(repository_file("."))
     .output()
     .expect("failed to execute abi_check binary");
@@ -2677,6 +2681,52 @@ fn abi_check_binary_accepts_trailing_crlf_empty_line_after_symbols_block_in_gold
   assert!(
     stdout.contains("Golden ABI snapshot matched"),
     "abi_check stdout must report successful golden snapshot matching for trailing CRLF empty line fixture\nstdout:\n{stdout}",
+  );
+}
+
+#[test]
+fn abi_check_binary_accepts_multiple_trailing_crlf_empty_lines_after_symbols_block_in_golden_snapshot()
+ {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
+  let snapshot_path =
+    unique_temp_snapshot_path("multiple-trailing-crlf-empty-lines-after-symbols-block");
+  let base_snapshot =
+    fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+      .expect("reference golden snapshot must be readable");
+  let mut snapshot_contents = base_snapshot.replace('\n', "\r\n");
+
+  snapshot_contents.push_str("\r\n\r\n");
+
+  fs::write(&snapshot_path, snapshot_contents).expect(
+    "multiple-trailing-crlf-empty-lines-after-symbols-block golden snapshot fixture write must succeed",
+  );
+
+  build_release_cdylib();
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .arg(&library_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    output.status.success(),
+    "abi_check must accept multiple trailing CRLF empty lines after SYMBOLS block\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stdout.contains("Golden ABI snapshot matched"),
+    "abi_check stdout must report successful golden snapshot matching for multiple trailing CRLF empty line fixture\nstdout:\n{stdout}",
   );
 }
 

@@ -10,7 +10,7 @@
 //! handle as closed but does not attempt to unmap code/data in this phase.
 
 use crate::abi::errno::{
-  EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST,
+  EACCES, EADDRINUSE, EADDRNOTAVAIL, EAGAIN, EBUSY, ECONNABORTED, ECONNREFUSED, ECONNRESET, EEXIST,
   EHOSTUNREACH, EINTR, EINVAL, EISDIR, ENETDOWN, ENETUNREACH, ENOENT, ENOEXEC, ENOTCONN, ENOTDIR,
   EPIPE, ETIMEDOUT,
 };
@@ -148,6 +148,7 @@ impl DlHandleRegistry {
 
       return;
     }
+
     self.clear_trackable_null_handle_entry();
 
     let handle_id = handle as usize;
@@ -441,6 +442,7 @@ const fn io_error_kind_errno(error_kind: io::ErrorKind) -> Option<c_int> {
   match error_kind {
     io::ErrorKind::NotFound => Some(ENOENT),
     io::ErrorKind::NotADirectory => Some(ENOTDIR),
+    io::ErrorKind::ResourceBusy => Some(EBUSY),
     io::ErrorKind::AlreadyExists => Some(EEXIST),
     io::ErrorKind::WouldBlock => Some(EAGAIN),
     io::ErrorKind::TimedOut => Some(ETIMEDOUT),
@@ -2061,6 +2063,13 @@ mod tests {
       io_error_errno(&error, ENOENT),
       crate::abi::errno::EHOSTUNREACH
     );
+  }
+
+  #[test]
+  fn io_error_errno_maps_resource_busy_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::ResourceBusy, "resource busy");
+
+    assert_eq!(io_error_errno(&error, ENOENT), crate::abi::errno::EBUSY);
   }
 
   #[test]

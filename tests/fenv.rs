@@ -885,6 +885,22 @@ fn feholdexcept_rejects_null_pointer_without_mutating_state() {
 }
 
 #[test]
+fn feholdexcept_null_pointer_rejection_preserves_errno() {
+  reset_fenv_state();
+  write_errno(92);
+
+  assert_eq!(fesetround(FE_DOWNWARD), 0);
+  assert_eq!(feraiseexcept(FE_INEXACT), 0);
+  // SAFETY: passing a null pointer is intentional for contract validation.
+  assert_ne!(unsafe { feholdexcept(core::ptr::null_mut()) }, 0);
+  assert_eq!(fegetround(), FE_DOWNWARD);
+  assert_eq!(fetestexcept(FE_ALL_EXCEPT), FE_INEXACT);
+  assert_eq!(read_errno(), 92);
+
+  reset_fenv_state();
+}
+
+#[test]
 fn feholdexcept_snapshot_can_be_restored_with_fesetenv() {
   reset_fenv_state();
 

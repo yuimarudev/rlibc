@@ -864,6 +864,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     "project_name_cstr() payload length should match project_name_cstr_len()"
   );
   assert_eq!(
+    &c_name_bytes[..rlibc::project_name_cstr_len()],
+    name_bytes,
+    "project_name_cstr_bytes() prefix before trailing NUL should match project_name() bytes"
+  );
+  assert_eq!(
     c_name_bytes.len(),
     rlibc::project_name_cstr_len() + 1,
     "project_name_cstr_bytes() should include exactly one trailing NUL byte"

@@ -1816,6 +1816,40 @@ fn sysconf_nprocessors_conf_repeated_success_keeps_errno_sentinel() {
 }
 
 #[test]
+fn sysconf_nprocessors_conf_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure()
+ {
+  set_errno(0);
+
+  // SAFETY: `len == 0` must fail with `ENAMETOOLONG` without dereferencing `name`.
+  let gethostname_result = unsafe { gethostname(core::ptr::null_mut(), 0 as size_t) };
+
+  assert_eq!(gethostname_result, -1);
+  assert_eq!(read_errno(), ENAMETOOLONG);
+
+  let first_configured = query(_SC_NPROCESSORS_CONF);
+  let first_errno = read_errno();
+  let second_configured = query(_SC_NPROCESSORS_CONF);
+  let second_errno = read_errno();
+
+  assert!(
+    first_configured > 0,
+    "_SC_NPROCESSORS_CONF must be positive"
+  );
+  assert!(
+    second_configured > 0,
+    "_SC_NPROCESSORS_CONF must be positive"
+  );
+  assert_eq!(
+    first_errno, ENAMETOOLONG,
+    "first successful _SC_NPROCESSORS_CONF query must preserve ENAMETOOLONG",
+  );
+  assert_eq!(
+    second_errno, ENAMETOOLONG,
+    "second successful _SC_NPROCESSORS_CONF query must preserve ENAMETOOLONG",
+  );
+}
+
+#[test]
 fn sysconf_unsupported_name_sets_einval() {
   set_errno(0);
 

@@ -1011,6 +1011,34 @@ fn sigaction_reserved_signal_takes_precedence_over_pointer_validation() {
 }
 
 #[test]
+fn sigaction_out_of_range_signal_with_invalid_act_keeps_oldact_unchanged() {
+  let _lock = signal_lock();
+  let dangling = std::ptr::NonNull::<SigAction>::dangling();
+  let invalid_action = dangling.as_ptr().cast_const();
+  let sentinel = SigAction {
+    sa_handler: usize::MAX - 2,
+    sa_flags: SA_RESTART,
+    sa_restorer: usize::MAX - 1,
+    sa_mask: SigSet {
+      bits: [u64::MAX; 16],
+    },
+  };
+  let mut old_action = sentinel;
+
+  write_errno(0);
+  // SAFETY: out-of-range signal is intentional; kernel must reject with EINVAL
+  // before touching invalid `act` or mutating `oldact`.
+  let status = unsafe { sigaction(MAX_KERNEL_SIGNAL + 1, invalid_action, &raw mut old_action) };
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(
+    old_action, sentinel,
+    "out-of-range signal rejection must keep oldact unchanged even with invalid act pointer",
+  );
+}
+
+#[test]
 fn sigaction_query_with_invalid_oldact_pointer_reports_efault() {
   let _lock = signal_lock();
   let dangling = std::ptr::NonNull::<SigAction>::dangling();

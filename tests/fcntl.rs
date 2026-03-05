@@ -667,6 +667,41 @@ fn fcntl_dupfd_cloexec_success_keeps_errno_unchanged() {
 }
 
 #[test]
+fn fcntl_dupfd_cloexec_duplicate_remains_usable_after_original_close() {
+  let (mut reader, writer) = std::os::unix::net::UnixStream::pair()
+    .expect("failed to create unix stream pair for fcntl cloexec duplicate usability test");
+  let original_fd = writer.as_raw_fd();
+
+  // SAFETY: `original_fd` is valid and minimum descriptor is an integer.
+  let duplicate_fd = unsafe { fcntl(original_fd, F_DUPFD_CLOEXEC, as_c_long(original_fd + 1)) };
+
+  assert!(duplicate_fd > original_fd);
+
+  // SAFETY: `duplicate_fd` is freshly returned by `F_DUPFD_CLOEXEC` and uniquely owned here.
+  let mut duplicate = unsafe { std::os::unix::net::UnixStream::from_raw_fd(duplicate_fd) };
+
+  // SAFETY: `duplicate` is valid and command takes no pointer arguments.
+  let duplicate_flags = unsafe { fcntl(duplicate.as_raw_fd(), F_GETFD, as_c_long(0)) };
+
+  assert!(duplicate_flags >= 0);
+  assert_ne!(duplicate_flags & FD_CLOEXEC, 0);
+
+  drop(writer);
+
+  duplicate
+    .write_all(b"z")
+    .expect("failed to write through cloexec-duplicated descriptor");
+
+  let mut received = [0_u8; 1];
+
+  reader
+    .read_exact(&mut received)
+    .expect("failed to read byte written via cloexec-duplicated descriptor");
+
+  assert_eq!(received, [b'z']);
+}
+
+#[test]
 fn fcntl_dupfd_cloexec_negative_minimum_sets_einval() {
   let (path, file) = create_read_only_temp_file(b"x");
 

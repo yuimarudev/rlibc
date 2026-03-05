@@ -2405,6 +2405,63 @@ fn explicit_hex_uppercase_prefixed_overflow_with_null_endptr_sets_erange() {
 }
 
 #[test]
+fn explicit_hex_uppercase_prefixed_negative_overflow_with_null_endptr_sets_erange() {
+  let big_uppercase_prefixed_negative_hex_digits = b"-0XFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\0";
+
+  set_errno(381);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let alpha_underflow = unsafe {
+    strtol(
+      big_uppercase_prefixed_negative_hex_digits.as_ptr().cast(),
+      null_mut(),
+      16,
+    )
+  };
+
+  assert_eq!(alpha_underflow, c_long::MIN);
+  assert_eq!(errno_value(), ERANGE);
+
+  set_errno(382);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let beta_underflow = unsafe {
+    strtoll(
+      big_uppercase_prefixed_negative_hex_digits.as_ptr().cast(),
+      null_mut(),
+      16,
+    )
+  };
+
+  assert_eq!(beta_underflow, c_longlong::MIN);
+  assert_eq!(errno_value(), ERANGE);
+
+  set_errno(383);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let gamma_overflow = unsafe {
+    strtoul(
+      big_uppercase_prefixed_negative_hex_digits.as_ptr().cast(),
+      null_mut(),
+      16,
+    )
+  };
+
+  assert_eq!(gamma_overflow, c_ulong::MAX);
+  assert_eq!(errno_value(), ERANGE);
+
+  set_errno(384);
+  // SAFETY: input pointer is valid and NUL-terminated; null endptr is allowed.
+  let delta_overflow = unsafe {
+    strtoull(
+      big_uppercase_prefixed_negative_hex_digits.as_ptr().cast(),
+      null_mut(),
+      16,
+    )
+  };
+
+  assert_eq!(delta_overflow, c_ulonglong::MAX);
+  assert_eq!(errno_value(), ERANGE);
+}
+
+#[test]
 fn conversion_error_errno_is_thread_local() {
   let input = b"123\0";
 

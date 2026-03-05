@@ -1348,6 +1348,18 @@ mod tests {
   }
 
   #[test]
+  fn resolve_service_name_from_builtin_matches_domain_case_insensitively() {
+    assert_eq!(
+      resolve_service_name_from_builtin("DoMaIn", IPPROTO_TCP),
+      Some(53)
+    );
+    assert_eq!(
+      resolve_service_name_from_builtin("DoMaIn", IPPROTO_UDP),
+      Some(53)
+    );
+  }
+
+  #[test]
   fn resolve_service_name_from_builtin_rejects_unknown_or_mismatched_protocol() {
     assert_eq!(resolve_service_name_from_builtin("smtp", IPPROTO_TCP), None);
     assert_eq!(resolve_service_name_from_builtin("http", IPPROTO_UDP), None);

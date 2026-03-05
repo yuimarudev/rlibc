@@ -949,6 +949,62 @@ fn mbrtowc_rejects_state_with_multibyte_pending_but_single_byte_expected_length(
 }
 
 #[test]
+fn mbrtowc_rejects_state_with_multibyte_pending_but_single_byte_expected_length_then_retries_same_input()
+ {
+  let input = [0xE3_u8, 0x81, 0x82];
+  let output_sentinel: wchar_t = -1;
+  let mut output = output_sentinel;
+  let mut state = mbstate_t::new();
+
+  // SAFETY: `mbstate_t` layout is fixed by ABI contract and verified in this
+  // test module (`size_of::<mbstate_t>() == 8`).
+  let raw_state = unsafe {
+    core::slice::from_raw_parts_mut((&raw mut state).cast::<u8>(), size_of::<mbstate_t>())
+  };
+
+  // Corrupted pending state: multibyte lead implies expected_len >= 2, not 1.
+  raw_state[0] = 0xE3;
+  raw_state[4] = 1;
+  raw_state[5] = 1;
+
+  set_errno(0);
+
+  // SAFETY: pointers are valid and input is readable.
+  let first = unsafe {
+    mbrtowc(
+      &raw mut output,
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, MBR_ERR_INVALID);
+  assert_eq!(errno_value(), EILSEQ);
+  assert_eq!(output, output_sentinel);
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+
+  set_errno(ERRNO_SENTINEL);
+
+  // SAFETY: pointers are valid and full input is readable.
+  let retried = unsafe {
+    mbrtowc(
+      &raw mut output,
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(retried, sz(input.len()));
+  assert_eq!(output, HIRAGANA_A);
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+  assert_eq!(errno_value(), ERRNO_SENTINEL);
+}
+
+#[test]
 fn mbrtowc_with_zero_n_rejects_state_with_multibyte_pending_but_single_byte_expected_length_then_retries_same_input()
  {
   let input = [0xE3_u8, 0x81, 0x82];
@@ -2481,6 +2537,56 @@ fn mbrlen_rejects_state_with_multibyte_pending_but_single_byte_expected_length()
   assert_eq!(errno_value(), EILSEQ);
   // SAFETY: state pointer is valid.
   assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+}
+
+#[test]
+fn mbrlen_rejects_state_with_multibyte_pending_but_single_byte_expected_length_then_retries_same_input()
+ {
+  let input = [0xE3_u8, 0x81, 0x82];
+  let mut state = mbstate_t::new();
+
+  // SAFETY: `mbstate_t` layout is fixed by ABI contract and verified in this
+  // test module (`size_of::<mbstate_t>() == 8`).
+  let raw_state = unsafe {
+    core::slice::from_raw_parts_mut((&raw mut state).cast::<u8>(), size_of::<mbstate_t>())
+  };
+
+  // Corrupted pending state: multibyte lead implies expected_len >= 2, not 1.
+  raw_state[0] = 0xE3;
+  raw_state[4] = 1;
+  raw_state[5] = 1;
+
+  set_errno(0);
+
+  // SAFETY: pointers are valid and input is readable.
+  let first = unsafe {
+    mbrlen(
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(first, MBR_ERR_INVALID);
+  assert_eq!(errno_value(), EILSEQ);
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+
+  set_errno(ERRNO_SENTINEL);
+
+  // SAFETY: pointers are valid and full input is readable.
+  let retried = unsafe {
+    mbrlen(
+      input.as_ptr().cast::<c_char>(),
+      sz(input.len()),
+      &raw mut state,
+    )
+  };
+
+  assert_eq!(retried, sz(input.len()));
+  // SAFETY: state pointer is valid.
+  assert_ne!(unsafe { mbsinit(&raw const state) }, 0);
+  assert_eq!(errno_value(), ERRNO_SENTINEL);
 }
 
 #[test]

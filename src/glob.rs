@@ -391,6 +391,10 @@ fn nocheck_fallback_pattern(pattern: &[u8], flags: c_int) -> Vec<u8> {
   normalized
 }
 
+fn literal_path_exists(path: &Path) -> bool {
+  path.symlink_metadata().is_ok()
+}
+
 fn bracket_match(
   pattern: &[u8],
   bracket_index: usize,
@@ -710,7 +714,7 @@ fn collect_matches(
       let literal_name = OsStr::from_bytes(&literal_segment);
       let next_path = candidate.fs_path.join(literal_name);
 
-      if !next_path.exists() {
+      if !literal_path_exists(&next_path) {
         continue;
       }
 

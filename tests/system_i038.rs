@@ -254,6 +254,42 @@ fn uname_success_preserves_enametoolong_from_gethostname_zero_length_failure() {
 }
 
 #[test]
+fn uname_repeated_success_preserves_enametoolong_from_gethostname_zero_length_failure() {
+  write_errno(0);
+
+  let failed = unsafe { gethostname(core::ptr::null_mut(), 0 as size_t) };
+
+  assert_eq!(failed, -1);
+  assert_eq!(read_errno(), ENAMETOOLONG);
+
+  let mut first = UtsName {
+    sysname: [0; 65],
+    nodename: [0; 65],
+    release: [0; 65],
+    version: [0; 65],
+    machine: [0; 65],
+    domainname: [0; 65],
+  };
+  let mut second = UtsName {
+    sysname: [0; 65],
+    nodename: [0; 65],
+    release: [0; 65],
+    version: [0; 65],
+    machine: [0; 65],
+    domainname: [0; 65],
+  };
+  let first_result = unsafe { uname(&raw mut first) };
+  let first_errno = read_errno();
+  let second_result = unsafe { uname(&raw mut second) };
+  let second_errno = read_errno();
+
+  assert_eq!(first_result, 0);
+  assert_eq!(second_result, 0);
+  assert_eq!(first_errno, ENAMETOOLONG);
+  assert_eq!(second_errno, ENAMETOOLONG);
+}
+
+#[test]
 fn uname_success_preserves_efault_from_gethostname_null_failure() {
   write_errno(0);
 
