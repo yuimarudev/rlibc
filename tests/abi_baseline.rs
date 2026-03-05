@@ -284,9 +284,16 @@ fn errno_alias_constants_match_linux_contract() {
   assert_eq!(EDEADLK, 35);
   assert_eq!(EDEADLOCK, 35);
   assert_eq!(EDEADLOCK, EDEADLK);
+  assert_eq!(EWOULDBLOCK, EAGAIN);
   assert_eq!(EOPNOTSUPP, 95);
   assert_eq!(ENOTSUP, 95);
   assert_eq!(ENOTSUP, EOPNOTSUPP);
+}
+
+#[test]
+fn errno_wouldblock_alias_preserves_slot_sequence() {
+  assert_eq!(EWOULDBLOCK, EAGAIN);
+  assert_eq!(ENOMEM, EWOULDBLOCK + 1);
 }
 
 #[test]

@@ -1236,31 +1236,38 @@ fn sigaction_validation_failure_keeps_oldact_unchanged() {
       bits: [u64::MAX; 16],
     },
   };
-  let mut old_action = sentinel;
 
-  write_errno(0);
-  // SAFETY: invalid signal is intentional; function must reject before touching
-  // the output slot.
-  let invalid_status = unsafe { sigaction(0, ptr::null(), &raw mut old_action) };
+  for invalid_signum in [0, -1, MAX_KERNEL_SIGNAL + 1] {
+    let mut old_action = sentinel;
 
-  assert_eq!(invalid_status, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(
-    old_action, sentinel,
-    "validation failure must not mutate oldact output buffer",
-  );
+    write_errno(0);
+    // SAFETY: invalid signal is intentional; function must reject before
+    // touching the output slot.
+    let invalid_status = unsafe { sigaction(invalid_signum, ptr::null(), &raw mut old_action) };
 
-  write_errno(0);
-  // SAFETY: reserved signal is intentional; function must reject before touching
-  // the output slot.
-  let reserved_status = unsafe { sigaction(SIGKILL, ptr::null(), &raw mut old_action) };
+    assert_eq!(invalid_status, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(
+      old_action, sentinel,
+      "validation failure must not mutate oldact output buffer for signum={invalid_signum}",
+    );
+  }
 
-  assert_eq!(reserved_status, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(
-    old_action, sentinel,
-    "reserved-signal rejection must not mutate oldact output buffer",
-  );
+  for reserved_signum in [SIGKILL, SIGSTOP] {
+    let mut old_action = sentinel;
+
+    write_errno(0);
+    // SAFETY: reserved signal is intentional; function must reject before
+    // touching the output slot.
+    let reserved_status = unsafe { sigaction(reserved_signum, ptr::null(), &raw mut old_action) };
+
+    assert_eq!(reserved_status, -1);
+    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(
+      old_action, sentinel,
+      "reserved-signal rejection must not mutate oldact output buffer for signum={reserved_signum}",
+    );
+  }
 }
 
 #[test]

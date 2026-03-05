@@ -1234,6 +1234,10 @@ fn adapter_rejects_dot_runtest_prefix_with_shell_operator_suffixes() {
       "i060-dot-runtest-output-redirection-suffix",
       "./runtest -w functional/argv > /tmp/rlibc-i060-dot-runtest-out",
     ),
+    (
+      "i060-dot-runtest-input-redirection-suffix",
+      "./runtest -w functional/argv < /tmp/rlibc-i060-dot-runtest-in",
+    ),
   ] {
     let temp_dir = TempDirGuard::new(name);
     let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
@@ -1273,6 +1277,10 @@ fn adapter_rejects_bin_runtest_prefix_with_shell_operator_suffixes() {
       "bin/runtest -w functional/argv > /tmp/rlibc-i060-bin-runtest-out",
     ),
     (
+      "i060-bin-runtest-input-redirection-suffix",
+      "bin/runtest -w functional/argv < /tmp/rlibc-i060-bin-runtest-in",
+    ),
+    (
       "i060-dot-bin-runtest-logical-and-suffix",
       "./bin/runtest -w functional/argv && echo unexpected",
     ),
@@ -1283,6 +1291,10 @@ fn adapter_rejects_bin_runtest_prefix_with_shell_operator_suffixes() {
     (
       "i060-dot-bin-runtest-output-redirection-suffix",
       "./bin/runtest -w functional/argv > /tmp/rlibc-i060-dot-bin-runtest-out",
+    ),
+    (
+      "i060-dot-bin-runtest-input-redirection-suffix",
+      "./bin/runtest -w functional/argv < /tmp/rlibc-i060-dot-bin-runtest-in",
     ),
   ] {
     let temp_dir = TempDirGuard::new(name);

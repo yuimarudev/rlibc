@@ -1626,6 +1626,50 @@ fn dlerror_missing_path_pending_message_survives_successful_dlopen_and_preserves
 }
 
 #[test]
+fn dlerror_missing_path_failure_read_and_clear_preserve_overwritten_errno() {
+  clear_pending_dlerror();
+
+  let missing_path =
+    c_string("/definitely/missing/rlibc_i055_missing_path_preserve_overwritten_errno.so");
+  // SAFETY: `missing_path` is a valid NUL-terminated C string.
+  let handle = unsafe { dlopen(missing_path.as_ptr().cast::<c_char>(), RTLD_NOW) };
+
+  assert!(handle.is_null(), "missing path must fail");
+  assert_ne!(
+    read_errno(),
+    0,
+    "missing-path dlopen failure should set a non-zero errno",
+  );
+
+  write_errno(5757);
+
+  let message = take_dlerror_message().expect("missing-path dlopen failure should set dlerror");
+
+  assert!(
+    message.contains("target path could not be opened"),
+    "unexpected dlerror message: {message}",
+  );
+  assert!(
+    message.contains("missing_path_preserve_overwritten_errno"),
+    "missing-path dlerror should include path detail text: {message}",
+  );
+  assert_eq!(
+    read_errno(),
+    5757,
+    "reading dlerror must preserve caller-overwritten errno",
+  );
+  assert!(
+    take_dlerror_message().is_none(),
+    "second dlerror call must clear pending state",
+  );
+  assert_eq!(
+    read_errno(),
+    5757,
+    "clearing dlerror must preserve caller-overwritten errno",
+  );
+}
+
+#[test]
 fn dlerror_reports_dlopen_non_elf_failure() {
   clear_pending_dlerror();
 

@@ -357,6 +357,44 @@ fn pthread_rwlock_can_reinitialize_with_invalid_attr_payload_after_destroy() {
 }
 
 #[test]
+fn pthread_rwlock_reinit_with_raw_attr_after_destroy_preserves_rwlock_semantics() {
+  let mut rwlock = new_rwlock();
+
+  init_rwlock(&mut rwlock);
+
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+  // SAFETY: lock was initialized by `init_rwlock`.
+  let first_destroy = unsafe { pthread_rwlock_destroy(rwlock_ptr) };
+
+  assert_eq!(first_destroy, 0);
+  let attr = pthread_rwlockattr_t {
+    __size: [
+      0x6B_u8, 0x2D_u8, 0xE0_u8, 0x91_u8, 0x02_u8, 0x00_u8, 0x00_u8, 0x00_u8,
+    ],
+  };
+  // SAFETY: lock storage was destroyed and can be reinitialized.
+  let reinit_result = unsafe { pthread_rwlock_init(rwlock_ptr, ptr::from_ref(&attr)) };
+
+  assert_eq!(reinit_result, 0);
+  // SAFETY: lock is initialized and writable.
+  assert_eq!(unsafe { pthread_rwlock_wrlock(rwlock_ptr) }, 0);
+  // SAFETY: same-thread read try-lock under writer ownership must be busy.
+  assert_eq!(unsafe { pthread_rwlock_tryrdlock(rwlock_ptr) }, EBUSY);
+  // SAFETY: current thread holds the write lock.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: lock remains initialized and can be acquired for reading.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+  // SAFETY: same-thread writer try-lock under reader ownership must be busy.
+  assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+  // SAFETY: current thread holds the read lock.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: lock is initialized and unlocked.
+  let second_destroy = unsafe { pthread_rwlock_destroy(rwlock_ptr) };
+
+  assert_eq!(second_destroy, 0);
+}
+
+#[test]
 fn pthread_rwlock_init_with_process_shared_attr_preserves_rwlock_semantics() {
   let mut rwlock = new_rwlock();
   let rwlock_ptr = ptr::from_mut(&mut rwlock);

@@ -612,6 +612,49 @@ fn abi_check_binary_accepts_trailing_empty_line_after_symbols_block_in_golden_sn
 }
 
 #[test]
+fn abi_check_binary_accepts_multiple_trailing_empty_lines_after_symbols_block_in_golden_snapshot() {
+  let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
+    .map(PathBuf::from)
+    .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
+  let snapshot_path = unique_temp_snapshot_path("multiple-trailing-empty-lines-after-symbols");
+  let mut snapshot_contents =
+    fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+      .expect("failed to read golden snapshot fixture");
+
+  snapshot_contents.push_str("\n\n");
+
+  fs::write(&snapshot_path, snapshot_contents).expect(
+    "multiple-trailing-empty-lines-after-symbols golden snapshot fixture write must succeed",
+  );
+
+  build_release_cdylib();
+
+  let output = Command::new(&abi_check_path)
+    .arg("--golden")
+    .arg(&snapshot_path)
+    .arg(&library_path)
+    .current_dir(repository_file("."))
+    .output()
+    .expect("failed to execute abi_check binary");
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  let _ = fs::remove_file(&snapshot_path);
+
+  assert!(
+    output.status.success(),
+    "abi_check must accept multiple trailing empty lines after SYMBOLS block\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+    output.status,
+    stdout,
+    stderr,
+  );
+  assert!(
+    stdout.contains("Golden ABI snapshot matched"),
+    "abi_check stdout must report golden snapshot match for multiple trailing empty line case\nstdout:\n{stdout}",
+  );
+}
+
+#[test]
 fn abi_check_binary_rejects_symbol_entries_with_trailing_semicolon_in_golden_snapshot() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
@@ -2807,8 +2850,8 @@ fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_a
 }
 
 #[test]
-fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_as_golden_path_before_short_help(
-) {
+fn abi_check_binary_treats_whitespace_prefixed_option_like_golden_equals_value_as_golden_path_before_short_help()
+ {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");

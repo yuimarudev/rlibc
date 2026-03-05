@@ -2453,6 +2453,36 @@ SYMBOLS:
   }
 
   #[test]
+  fn parse_snapshot_rejects_symbol_entries_with_trailing_space() {
+    let snapshot = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:
+memcpy 
+";
+    let error =
+      parse_snapshot(snapshot).expect_err("symbol entries with trailing spaces must be rejected");
+
+    assert!(error.contains("invalid symbol entry with surrounding whitespace"));
+  }
+
+  #[test]
+  fn parse_snapshot_rejects_symbol_entries_with_trailing_tab() {
+    let snapshot = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:
+memcpy\t
+";
+    let error =
+      parse_snapshot(snapshot).expect_err("symbol entries with trailing tabs must be rejected");
+
+    assert!(error.contains("invalid symbol entry with surrounding whitespace"));
+  }
+
+  #[test]
   fn parse_snapshot_rejects_empty_line_inside_symbols_block() {
     let snapshot = "\
 ABI_SNAPSHOT_V1
@@ -2498,6 +2528,25 @@ memcpy
     let parsed =
       parse_snapshot(snapshot).expect("trailing empty line after symbol list should be accepted");
 
+    assert_eq!(parsed.symbols, BTreeSet::from(["memcpy".to_string()]));
+  }
+
+  #[test]
+  fn parse_snapshot_accepts_multiple_trailing_empty_lines_after_symbols_block() {
+    let snapshot = "\
+ABI_SNAPSHOT_V1
+ELF_CLASS=ELF64
+ELF_MACHINE=Advanced Micro Devices X86-64
+SYMBOLS:
+memcpy
+
+
+";
+    let parsed = parse_snapshot(snapshot)
+      .expect("multiple trailing empty lines after symbol list should be accepted");
+
+    assert_eq!(parsed.class, "ELF64");
+    assert_eq!(parsed.machine, "Advanced Micro Devices X86-64");
     assert_eq!(parsed.symbols, BTreeSet::from(["memcpy".to_string()]));
   }
 

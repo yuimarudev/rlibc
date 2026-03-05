@@ -937,6 +937,67 @@ fn memmove_unaligned_u128_word_boundary_lengths_match_copy_within() {
 }
 
 #[test]
+fn memmove_u128_boundary_overlap_cases_match_manual_temporary() {
+  let original = [
+    0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f_u128,
+    0x1011_1213_1415_1617_1819_1a1b_1c1d_1e1f,
+    0x2021_2223_2425_2627_2829_2a2b_2c2d_2e2f,
+  ];
+  let total_bytes = core::mem::size_of_val(&original);
+  let cases = [
+    (1usize, 17usize, 15usize),
+    (1, 17, 16),
+    (1, 17, 17),
+    (17, 1, 15),
+    (17, 1, 16),
+    (17, 1, 17),
+    (3, 19, 31),
+    (3, 19, 32),
+    (3, 19, 33),
+    (19, 3, 31),
+    (19, 3, 32),
+    (19, 3, 33),
+  ];
+
+  for (source_offset, destination_offset, copy_len) in cases {
+    assert!(source_offset + copy_len <= total_bytes);
+    assert!(destination_offset + copy_len <= total_bytes);
+
+    let mut actual = original;
+    let mut expected = original;
+
+    // SAFETY: arrays are live and range checks above ensure in-bounds byte indexing.
+    unsafe {
+      let expected_bytes = core::slice::from_raw_parts_mut(
+        expected.as_mut_ptr().cast::<u8>(),
+        core::mem::size_of_val(&expected),
+      );
+      let mut temp = [0_u8; 48];
+      temp[..copy_len].copy_from_slice(&expected_bytes[source_offset..source_offset + copy_len]);
+      expected_bytes[destination_offset..destination_offset + copy_len]
+        .copy_from_slice(&temp[..copy_len]);
+    }
+
+    let destination = actual
+      .as_mut_ptr()
+      .cast::<u8>()
+      .wrapping_add(destination_offset);
+    let source = actual.as_ptr().cast::<u8>().wrapping_add(source_offset);
+    // SAFETY: pointers are derived from live arrays and bounded by checks above.
+    let returned = unsafe { memmove(destination.cast(), source.cast(), sz(copy_len)) }.cast();
+
+    assert_eq!(
+      returned, destination,
+      "unexpected return pointer for src={source_offset}, dst={destination_offset}, len={copy_len}",
+    );
+    assert_eq!(
+      actual, expected,
+      "unexpected u128 bytes for src={source_offset}, dst={destination_offset}, len={copy_len}",
+    );
+  }
+}
+
+#[test]
 fn memmove_non_overlapping_unaligned_non_byte_ranges_match_copy_from_slice() {
   let cases = [
     (0usize, 0usize, 24usize),

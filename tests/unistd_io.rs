@@ -2740,6 +2740,34 @@ fn recv_non_socket_fd_with_huge_length_and_null_buffer_returns_minus_one_and_err
 }
 
 #[test]
+fn recv_non_socket_fd_with_huge_length_returns_minus_one_and_errno_enotsock() {
+  let file_path = unique_temp_path("recv-non-socket-huge");
+  let mut payload = [0x56_u8];
+
+  fs::write(&file_path, b"not-socket").expect("failed to create recv non-socket huge fd test file");
+
+  let file = File::open(&file_path).expect("failed to open recv non-socket huge fd test file");
+
+  set_errno(0);
+
+  // SAFETY: payload pointer is valid and descriptor is intentionally not a socket.
+  let received = unsafe {
+    recv(
+      file.as_raw_fd(),
+      payload.as_mut_ptr().cast::<c_void>(),
+      size_t::MAX,
+      0,
+    )
+  };
+
+  assert_eq!(received, -1);
+  assert_eq!(errno_value(), ENOTSOCK);
+
+  drop(file);
+  fs::remove_file(file_path).expect("failed to remove recv non-socket huge fd test file");
+}
+
+#[test]
 fn openat_opens_file_relative_to_directory_fd() {
   let directory = unique_temp_path("openat-dir");
   let file_name = "sample.txt";

@@ -1044,6 +1044,18 @@ fn quality_gate_script_usage_mentions_duplicate_option_rejection() {
 }
 
 #[test]
+fn quality_gate_script_usage_mentions_duplicate_continue_on_fail_rejection_for_flag_form() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let required_snippet =
+    "duplicate --continue-on-fail is rejected when the flag is repeated";
+
+  assert!(
+    script.contains(required_snippet),
+    "usage/continue-on-fail contract must mention duplicate-flag rejection: {required_snippet}"
+  );
+}
+
+#[test]
 fn quality_gate_script_usage_mentions_duplicate_profile_rejection_for_both_forms() {
   let script = read_repository_file("scripts/quality-gate.sh");
   let required_snippet =
@@ -1880,9 +1892,11 @@ fn command_uses_supported_runtest_prefix_rejects_operator_suffixes_for_bin_runte
     "bin/runtest -w functional/argv && echo unexpected",
     "bin/runtest -w functional/argv | cat",
     "bin/runtest -w functional/argv > /tmp/rlibc-i060-bin-runtest-out",
+    "bin/runtest -w functional/argv < /tmp/rlibc-i060-bin-runtest-in",
     "./bin/runtest -w functional/argv && echo unexpected",
     "./bin/runtest -w functional/argv | cat",
     "./bin/runtest -w functional/argv > /tmp/rlibc-i060-dot-bin-runtest-out",
+    "./bin/runtest -w functional/argv < /tmp/rlibc-i060-dot-bin-runtest-in",
   ] {
     assert!(
       !command_uses_supported_runtest_prefix(command),
@@ -1898,6 +1912,7 @@ fn command_uses_supported_runtest_prefix_rejects_shell_suffixes_for_dot_runtest_
     "./runtest -w functional/argv && echo unexpected",
     "./runtest -w functional/argv | cat",
     "./runtest -w functional/argv > /tmp/rlibc-i060-dot-runtest-out",
+    "./runtest -w functional/argv < /tmp/rlibc-i060-dot-runtest-in",
   ] {
     assert!(
       !command_uses_supported_runtest_prefix(command),

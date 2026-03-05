@@ -1647,6 +1647,27 @@ fn strftime_formats_e_alternative_meridiem_and_time_alias_tokens() {
 }
 
 #[test]
+fn strftime_e_alternative_uppercase_meridiem_alias_token() {
+  let mut morning = fixture_tm();
+
+  morning.tm_hour = 3;
+
+  let mut afternoon = fixture_tm();
+
+  afternoon.tm_hour = 15;
+
+  let morning_expected = b"am|am";
+  let afternoon_expected = b"pm|pm";
+  let (morning_written, morning_output) = run_strftime(b"%EP|%P\0", &morning, 32);
+  let (afternoon_written, afternoon_output) = run_strftime(b"%EP|%P\0", &afternoon, 32);
+
+  assert_eq!(morning_written, morning_expected.len());
+  assert_eq!(c_string_prefix(&morning_output), morning_expected);
+  assert_eq!(afternoon_written, afternoon_expected.len());
+  assert_eq!(c_string_prefix(&afternoon_output), afternoon_expected);
+}
+
+#[test]
 fn strftime_invalid_hour_for_e_alternative_meridiem_and_time_aliases_fallback_to_question_mark() {
   let mut time_parts = fixture_tm();
 
@@ -1654,6 +1675,19 @@ fn strftime_invalid_hour_for_e_alternative_meridiem_and_time_aliases_fallback_to
 
   let expected = b"?|?:04:05";
   let (written, output) = run_strftime(b"%Ep|%ET\0", &time_parts, 32);
+
+  assert_eq!(written, expected.len());
+  assert_eq!(c_string_prefix(&output), expected);
+}
+
+#[test]
+fn strftime_invalid_hour_for_e_alternative_uppercase_meridiem_alias_fallback_to_question_mark() {
+  let mut time_parts = fixture_tm();
+
+  time_parts.tm_hour = 24;
+
+  let expected = b"?";
+  let (written, output) = run_strftime(b"%EP\0", &time_parts, 16);
 
   assert_eq!(written, expected.len());
   assert_eq!(c_string_prefix(&output), expected);

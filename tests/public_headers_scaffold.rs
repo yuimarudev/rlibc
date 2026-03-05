@@ -1189,6 +1189,7 @@ fn exported_symbol_detection_rejects_statement_context_function_call_text() {
   ));
   assert!(!line_declares_exported_symbol("do getpid();", "getpid"));
   assert!(!line_declares_exported_symbol("case getpid():", "getpid"));
+  assert!(!line_declares_exported_symbol("label: getpid();", "getpid"));
   assert!(!line_declares_exported_symbol(
     "case wrapper(getpid()):",
     "getpid",

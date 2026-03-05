@@ -1943,6 +1943,47 @@ fn adapter_rejects_results_file_trailing_slash_even_when_later_value_is_valid() 
 }
 
 #[test]
+fn adapter_rejects_results_file_trailing_slash_even_when_later_value_is_valid_and_before_later_unknown_argument()
+ {
+  let temp_dir = TempDirGuard::new("i061-results-trailing-slash-override-before-unknown-argument");
+  let suite_root = temp_dir.path().join("suite-root");
+  let valid_results = suite_root.join("results/ltp-results.txt");
+  let marker = temp_dir
+    .path()
+    .join("suite-command-ran-trailing-slash-override-before-unknown-argument.marker");
+
+  write_text(&valid_results, "PASS trailing-slash.override.valid.case\n");
+
+  let arguments = vec![
+    "--suite".to_string(),
+    "ltp".to_string(),
+    "--suite-root".to_string(),
+    suite_root.to_string_lossy().into_owned(),
+    "--results-file".to_string(),
+    "results/".to_string(),
+    "--results-file".to_string(),
+    valid_results.to_string_lossy().into_owned(),
+    "--unknown-after-invalid-results-file".to_string(),
+    "--".to_string(),
+    "touch".to_string(),
+    marker.to_string_lossy().into_owned(),
+  ];
+  let output = run_adapter(&arguments);
+  let stderr = stderr_text(&output);
+
+  assert!(!output.status.success());
+  assert!(stderr.contains("results file path must not end with trailing slash"));
+  assert!(
+    !stderr.contains("unknown argument"),
+    "trailing-slash preflight error should win over later unknown argument"
+  );
+  assert!(
+    !marker.exists(),
+    "suite command must not run when any earlier results-file path has trailing slash"
+  );
+}
+
+#[test]
 fn adapter_rejects_symlinked_out_of_root_ancestor_before_running_suite_command() {
   let temp_dir = TempDirGuard::new("i061-results-symlink-ancestor-preflight");
   let suite_root = temp_dir.path().join("suite-root");
