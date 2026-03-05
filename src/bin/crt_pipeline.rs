@@ -722,6 +722,19 @@ mod tests {
   }
 
   #[test]
+  fn parse_args_rejects_three_mixed_help_tokens_after_double_dash_without_summary_suffix() {
+    let error = parse_args(&[
+      "--".to_string(),
+      "-h".to_string(),
+      "--help".to_string(),
+      "--cc".to_string(),
+    ])
+    .expect_err("three mixed help tokens after double dash must fail without summary suffix");
+
+    assert_eq!(error, "unexpected positional arguments: -h, --help, --cc");
+  }
+
+  #[test]
   fn parse_args_summarizes_many_option_like_positionals_after_double_dash() {
     let error = parse_args(&[
       "--".to_string(),

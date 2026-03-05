@@ -1606,6 +1606,45 @@ fn getaddrinfo_resolves_domain_service_name_without_ai_numericserv_with_null_nod
 }
 
 #[test]
+fn getaddrinfo_resolves_mixed_case_domain_service_name_without_ai_numericserv_with_null_node() {
+  let service = CString::new("DoMaIn").expect("service literal must be NUL-free");
+  let mut hints = empty_hints();
+  let mut result = ptr::null_mut();
+
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_DGRAM;
+  hints.ai_protocol = IPPROTO_UDP;
+
+  // SAFETY: all pointers are valid for the duration of this call.
+  let status = unsafe {
+    getaddrinfo(
+      ptr::null(),
+      service.as_ptr(),
+      &raw const hints,
+      &raw mut result,
+    )
+  };
+
+  assert_eq!(status, 0);
+  assert!(!result.is_null());
+
+  // SAFETY: successful `getaddrinfo` returns a valid linked-list head.
+  unsafe {
+    let first = &*result;
+    let first_addr = &*sockaddr_ptr_as_in(first.ai_addr);
+
+    assert_eq!(first.ai_family, AF_INET);
+    assert_eq!(first.ai_socktype, SOCK_DGRAM);
+    assert_eq!(first.ai_protocol, IPPROTO_UDP);
+    assert_eq!(u16::from_be(first_addr.sin_port), 53);
+    assert_eq!(first_addr.sin_addr.s_addr.to_be_bytes(), [127, 0, 0, 1]);
+  }
+
+  // SAFETY: `result` is owned by this test after successful `getaddrinfo`.
+  unsafe { freeaddrinfo(result) };
+}
+
+#[test]
 fn getaddrinfo_rejects_http_service_name_with_surrounding_whitespace_without_ai_numericserv() {
   let host = CString::new("127.0.0.1").expect("host literal must be NUL-free");
   let service = CString::new(" \thttp\n").expect("service literal must be NUL-free");

@@ -2,10 +2,10 @@ use core::mem::{align_of, size_of};
 use rlibc::abi::types::c_int;
 use rlibc::errno::__errno_location;
 use rlibc::fenv::{
-  FE_ALL_EXCEPT, FE_DFL_ENV, FE_DIVBYZERO, FE_DOWNWARD, FE_INEXACT, FE_INVALID, FE_OVERFLOW,
-  FE_TONEAREST, FE_TOWARDZERO, FE_UNDERFLOW, FE_UPWARD, feclearexcept, fegetenv, fegetexceptflag,
-  fegetround, feholdexcept, fenv_t, feraiseexcept, fesetenv, fesetexceptflag, fesetround,
-  fetestexcept, feupdateenv, fexcept_t,
+  feclearexcept, fegetenv, fegetexceptflag, fegetround, feholdexcept, fenv_t, feraiseexcept,
+  fesetenv, fesetexceptflag, fesetround, fetestexcept, feupdateenv, fexcept_t, FE_ALL_EXCEPT,
+  FE_DFL_ENV, FE_DIVBYZERO, FE_DOWNWARD, FE_INEXACT, FE_INVALID, FE_OVERFLOW, FE_TONEAREST,
+  FE_TOWARDZERO, FE_UNDERFLOW, FE_UPWARD,
 };
 use std::thread;
 
@@ -609,6 +609,34 @@ fn fesetenv_rejects_invalid_round_mode_without_mutating_state() {
   assert_ne!(unsafe { fesetenv(&raw const invalid) }, 0);
   assert_eq!(fegetround(), FE_DOWNWARD);
   assert_eq!(fetestexcept(FE_ALL_EXCEPT), FE_OVERFLOW);
+
+  reset_fenv_state();
+}
+
+#[test]
+fn fesetenv_invalid_round_mode_rejection_preserves_errno() {
+  reset_fenv_state();
+  write_errno(58);
+
+  assert_eq!(fesetround(FE_DOWNWARD), 0);
+  assert_eq!(feraiseexcept(FE_OVERFLOW), 0);
+
+  let mut invalid = fenv_t::default();
+  // SAFETY: pointer to `invalid` is valid for one write.
+  assert_eq!(unsafe { fegetenv(&raw mut invalid) }, 0);
+
+  let env_words = core::ptr::addr_of_mut!(invalid).cast::<u32>();
+  // SAFETY: `fenv_t` is `#[repr(C)]` and stores `words: [u32; 8]` at offset 0.
+  // Index 0 corresponds to encoded rounding mode in this implementation.
+  unsafe {
+    env_words.add(0).write(0xFFFF_u32);
+  }
+
+  // SAFETY: pointer to `invalid` is valid for one read.
+  assert_ne!(unsafe { fesetenv(&raw const invalid) }, 0);
+  assert_eq!(fegetround(), FE_DOWNWARD);
+  assert_eq!(fetestexcept(FE_ALL_EXCEPT), FE_OVERFLOW);
+  assert_eq!(read_errno(), 58);
 
   reset_fenv_state();
 }

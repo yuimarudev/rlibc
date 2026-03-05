@@ -351,6 +351,31 @@ fn decode_utf8_rejects_corrupted_pending_prefix_on_empty_input() {
 }
 
 #[test]
+fn decode_utf8_rejects_corrupted_pending_prefix_then_retries_same_input() {
+  let mut state = mbstate_t::new();
+
+  // bytes=[0x80, 0x80, 0, 0], pending_len=2, expected_len=2 (invalid lead byte).
+  write_state_bytes(&mut state, [0x80, 0x80, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00]);
+
+  let input = [b'A', b'B'];
+  let first = decode_utf8(&mut state, &input);
+
+  assert_eq!(first, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+
+  let retried = decode_utf8(&mut state, &input);
+
+  assert_eq!(
+    retried,
+    Utf8DecodeResult::Complete {
+      code_point: u32::from(b'A'),
+      consumed: 1,
+    },
+  );
+  assert!(state.is_initial());
+}
+
+#[test]
 fn decode_utf8_rejects_corrupted_pending_second_byte_bounds_without_consuming_input() {
   let mut state = mbstate_t::new();
 
@@ -532,6 +557,31 @@ fn decode_utf8_rejects_corrupted_pending_length_relationship_on_empty_input() {
   assert_eq!(
     pending_exceeds_result,
     Utf8DecodeResult::Invalid { consumed: 0 }
+  );
+  assert!(state.is_initial());
+}
+
+#[test]
+fn decode_utf8_rejects_corrupted_pending_length_relationship_then_retries_same_input() {
+  let mut state = mbstate_t::new();
+
+  // bytes=[0xE3, 0x81, 0, 0], pending_len=2, expected_len=2 (pending == expected).
+  write_state_bytes(&mut state, [0xE3, 0x81, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00]);
+
+  let input = [0xE3, 0x81, 0x82];
+  let first = decode_utf8(&mut state, &input);
+
+  assert_eq!(first, Utf8DecodeResult::Invalid { consumed: 0 });
+  assert!(state.is_initial());
+
+  let retried = decode_utf8(&mut state, &input);
+
+  assert_eq!(
+    retried,
+    Utf8DecodeResult::Complete {
+      code_point: 0x3042,
+      consumed: input.len(),
+    },
   );
   assert!(state.is_initial());
 }

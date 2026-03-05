@@ -1878,6 +1878,34 @@ fn memcpy_zero_length_allows_one_past_end_pointers() {
 }
 
 #[test]
+fn memcpy_zero_length_allows_one_past_end_pointers_with_distinct_alignments() {
+  let mut destination_words = [7_u16, 8, 9];
+  let source_words = [1_u32, 2, 3];
+  let destination_one_past_end = destination_words
+    .as_mut_ptr()
+    .wrapping_add(destination_words.len())
+    .cast::<u8>();
+  let source_one_past_end = source_words
+    .as_ptr()
+    .wrapping_add(source_words.len())
+    .cast::<u8>();
+  let destination_before = destination_words;
+  // SAFETY: `n == 0`, so one-past-end pointers are never dereferenced.
+  let returned = unsafe {
+    memcpy(
+      destination_one_past_end.cast(),
+      source_one_past_end.cast(),
+      sz(0),
+    )
+  }
+  .cast::<u8>();
+
+  assert_eq!(returned, destination_one_past_end);
+  assert_eq!(destination_words, destination_before);
+  assert_eq!(source_words, [1_u32, 2, 3]);
+}
+
+#[test]
 fn memcpy_zero_length_allows_same_one_past_end_pointer() {
   let mut buffer = [7_u8, 8, 9];
   let one_past_end = buffer.as_mut_ptr().wrapping_add(buffer.len());

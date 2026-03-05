@@ -2097,6 +2097,16 @@ mod tests {
   }
 
   #[test]
+  fn io_error_errno_maps_directory_not_empty_kind_when_raw_errno_is_absent() {
+    let error = io::Error::new(io::ErrorKind::DirectoryNotEmpty, "directory not empty");
+
+    assert_eq!(
+      io_error_errno(&error, ENOENT),
+      crate::abi::errno::ENOTEMPTY
+    );
+  }
+
+  #[test]
   fn io_error_errno_preserves_einprogress_raw_errno_when_present() {
     let error = io::Error::from_raw_os_error(crate::abi::errno::EINPROGRESS);
 

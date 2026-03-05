@@ -1024,6 +1024,28 @@ fn prlimit64_low_invalid_new_limit_pointer_sets_efault_and_preserves_limits() {
 }
 
 #[test]
+fn prlimit64_low_invalid_new_limit_does_not_overwrite_old_limit_output() {
+  let _guard = process_wide_rlimit_lock();
+  let invalid_new_limit = core::ptr::with_exposed_provenance::<RLimit>(1);
+  let sentinel = RLimit {
+    rlim_cur: 1234,
+    rlim_max: 5678,
+  };
+  let mut old_limit = sentinel;
+
+  set_errno(0);
+
+  let status = unsafe { prlimit64(0, RLIMIT_NOFILE, invalid_new_limit, &raw mut old_limit) };
+
+  assert_eq!(status, -1);
+  assert_eq!(read_errno(), EFAULT);
+  assert_eq!(
+    old_limit, sentinel,
+    "failed prlimit64 with low invalid new_limit pointer must not overwrite old_limit output"
+  );
+}
+
+#[test]
 fn prlimit64_success_keeps_errno_set_by_prior_low_invalid_new_limit_efault() {
   let _guard = process_wide_rlimit_lock();
   let invalid_new_limit = core::ptr::with_exposed_provenance::<RLimit>(1);

@@ -109,7 +109,10 @@ fn c_float_and_c_double_preserve_infinity_bits() {
     negative_float_round_trip.to_bits(),
     f32::NEG_INFINITY.to_bits()
   );
-  assert_eq!(positive_double_round_trip.to_bits(), f64::INFINITY.to_bits());
+  assert_eq!(
+    positive_double_round_trip.to_bits(),
+    f64::INFINITY.to_bits()
+  );
   assert_eq!(
     negative_double_round_trip.to_bits(),
     f64::NEG_INFINITY.to_bits()

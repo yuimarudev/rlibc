@@ -1268,6 +1268,17 @@ fn clock_gettime_extreme_negative_invalid_clock_id_with_null_timespec_overwrites
 }
 
 #[test]
+fn clock_gettime_near_max_positive_invalid_clock_id_with_null_timespec_overwrites_existing_errno_to_efault()
+ {
+  write_errno(17);
+
+  let rc = clock_gettime(c_int::MAX - 1, ptr::null_mut());
+
+  assert_eq!(rc, -1);
+  assert_eq!(read_errno(), EFAULT);
+}
+
+#[test]
 fn gettimeofday_success_after_clock_gettime_invalid_clock_id_keeps_errno_einval() {
   let mut ts = timespec {
     tv_sec: -1,

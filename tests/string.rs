@@ -462,6 +462,22 @@ fn strlen_and_strnlen_count_utf8_bytes_from_offset_pointer() {
 }
 
 #[test]
+fn strnlen_matches_bound_for_non_terminated_utf8_offset_slice() {
+  let input = b"\xE5\xAF\xBF\xE5\x8F\xB8";
+  let base_ptr = as_c_char_ptr(input);
+  // SAFETY: offset by 3 bytes stays within `input`.
+  let offset_ptr = unsafe { base_ptr.add(3) };
+  let remaining = input.len() - 3;
+
+  for bound in 0..=remaining {
+    // SAFETY: `bound` never exceeds the readable bytes from `offset_ptr`.
+    let bounded_len = unsafe { strnlen(offset_ptr, bound) };
+
+    assert_eq!(bounded_len, bound, "bound={bound}");
+  }
+}
+
+#[test]
 fn strlen_and_strnlen_stop_at_first_nul_from_utf8_offset_with_extra_tail() {
   let input = b"\xE5\xAF\xBF\xE5\x8F\xB8\0\xF0\x9F\x8D\xA3\0";
   let base_ptr = as_c_char_ptr(input);

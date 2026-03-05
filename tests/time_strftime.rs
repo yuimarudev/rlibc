@@ -1723,6 +1723,28 @@ fn strftime_e_alternative_uppercase_meridiem_alias_token() {
 }
 
 #[test]
+fn strftime_e_alternative_meridiem_and_time_alias_tokens_at_boundaries() {
+  let mut midnight = fixture_tm();
+
+  midnight.tm_hour = 0;
+
+  let mut noon = fixture_tm();
+
+  noon.tm_hour = 12;
+
+  let midnight_expected = b"AM|AM|am|am|00:04:05|00:04:05";
+  let noon_expected = b"PM|PM|pm|pm|12:04:05|12:04:05";
+  let (midnight_written, midnight_output) =
+    run_strftime(b"%Ep|%p|%EP|%P|%ET|%T\0", &midnight, 64);
+  let (noon_written, noon_output) = run_strftime(b"%Ep|%p|%EP|%P|%ET|%T\0", &noon, 64);
+
+  assert_eq!(midnight_written, midnight_expected.len());
+  assert_eq!(c_string_prefix(&midnight_output), midnight_expected);
+  assert_eq!(noon_written, noon_expected.len());
+  assert_eq!(c_string_prefix(&noon_output), noon_expected);
+}
+
+#[test]
 fn strftime_invalid_hour_for_e_alternative_meridiem_and_time_aliases_fallback_to_question_mark() {
   let mut time_parts = fixture_tm();
 

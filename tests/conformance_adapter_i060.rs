@@ -1402,6 +1402,56 @@ fn adapter_rejects_bin_runtest_prefix_with_glob_suffixes() {
 }
 
 #[test]
+fn adapter_rejects_non_bare_runtest_prefix_with_env_expansion_suffixes() {
+  for (name, command) in [
+    (
+      "i060-dot-runtest-env-expansion",
+      "./runtest -w functional/$TARGET_CASE",
+    ),
+    (
+      "i060-dot-runtest-command-substitution",
+      "./runtest -w $(printf functional/argv)",
+    ),
+    (
+      "i060-bin-runtest-env-expansion",
+      "bin/runtest -w functional/$TARGET_CASE",
+    ),
+    (
+      "i060-bin-runtest-command-substitution",
+      "bin/runtest -w $(printf functional/argv)",
+    ),
+    (
+      "i060-dot-bin-runtest-env-expansion",
+      "./bin/runtest -w functional/$TARGET_CASE",
+    ),
+    (
+      "i060-dot-bin-runtest-command-substitution",
+      "./bin/runtest -w $(printf functional/argv)",
+    ),
+  ] {
+    let temp_dir = TempDirGuard::new(name);
+    let manifest_path = temp_dir.path().join("libc-test-smoke.txt");
+
+    write_text(&manifest_path, &format!("case-a|{command}\n"));
+
+    let arguments = vec![
+      "--dry-run".to_string(),
+      "--profile".to_string(),
+      manifest_path.to_string_lossy().into_owned(),
+    ];
+    let output = run_adapter(&arguments);
+    let stderr = stderr_text(&output);
+
+    assert!(
+      !output.status.success(),
+      "env expansion suffix for non-bare runtest prefix must fail: {command}"
+    );
+    assert!(stderr.contains("runtest smoke command contains unsupported shell operators"));
+    assert!(stderr.contains("line 1"));
+  }
+}
+
+#[test]
 fn adapter_rejects_runtest_prefix_with_pipe_operator_suffix() {
   let temp_dir = TempDirGuard::new("i060-runtest-pipe-operator");
   let manifest_path = temp_dir.path().join("libc-test-smoke.txt");

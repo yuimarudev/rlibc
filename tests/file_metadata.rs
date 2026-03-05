@@ -1088,6 +1088,56 @@ fn fstatat_relative_path_with_non_directory_fd_and_null_output_nofollow_sets_eno
 }
 
 #[test]
+fn fstatat_relative_path_with_non_directory_fd_and_null_output_empty_path_flag_sets_enotdir() {
+  let temp_dir = TempDir::new();
+  let target_name =
+    CString::new("nondir_fd_null_output_empty_flag_target.txt").expect("CString::new failed");
+  let target_path = temp_dir
+    .path()
+    .join("nondir_fd_null_output_empty_flag_target.txt");
+  let fd_source_path = temp_dir
+    .path()
+    .join("nondir_fd_null_output_empty_flag_fd_source.txt");
+
+  fs::write(&target_path, b"payload").expect("failed to create relative-path empty-flag target");
+  fs::write(&fd_source_path, b"fd-source")
+    .expect("failed to create non-directory fd source for relative-path empty-flag test");
+
+  let non_directory_fd =
+    File::open(&fd_source_path).expect("failed to open non-directory fd source file");
+
+  write_errno(EFAULT);
+
+  // SAFETY: relative path pointer is valid; non-directory `dirfd` should fail path resolution first.
+  let empty_path_flag_rc = unsafe {
+    fstatat(
+      non_directory_fd.as_raw_fd(),
+      target_name.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH,
+    )
+  };
+
+  assert_eq!(empty_path_flag_rc, -1);
+  assert_eq!(read_errno(), ENOTDIR);
+
+  write_errno(EBADF);
+
+  // SAFETY: relative path pointer is valid; non-directory `dirfd` should fail path resolution first.
+  let combined_flags_rc = unsafe {
+    fstatat(
+      non_directory_fd.as_raw_fd(),
+      target_name.as_ptr(),
+      std::ptr::null_mut(),
+      AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW,
+    )
+  };
+
+  assert_eq!(combined_flags_rc, -1);
+  assert_eq!(read_errno(), ENOTDIR);
+}
+
+#[test]
 fn fstatat_unsupported_flag_sets_einval() {
   let temp_dir = TempDir::new();
   let file_path = temp_dir.path().join("invalid_flag.txt");

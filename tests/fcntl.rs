@@ -702,6 +702,42 @@ fn fcntl_dupfd_cloexec_duplicate_remains_usable_after_original_close() {
 }
 
 #[test]
+fn fcntl_dupfd_cloexec_original_stream_survives_duplicate_drop() {
+  let (mut peer, mut original) = std::os::unix::net::UnixStream::pair().expect(
+    "failed to create unix stream pair for fcntl cloexec original stream survivability test",
+  );
+  let original_fd = original.as_raw_fd();
+
+  // SAFETY: `original_fd` is valid and minimum descriptor is an integer.
+  let duplicate_fd = unsafe { fcntl(original_fd, F_DUPFD_CLOEXEC, as_c_long(original_fd + 1)) };
+
+  assert!(duplicate_fd > original_fd);
+
+  // SAFETY: `duplicate_fd` is freshly returned by `F_DUPFD_CLOEXEC` and uniquely owned here.
+  let duplicate = unsafe { std::os::unix::net::UnixStream::from_raw_fd(duplicate_fd) };
+
+  // SAFETY: `duplicate` is valid and command takes no pointer arguments.
+  let duplicate_flags = unsafe { fcntl(duplicate.as_raw_fd(), F_GETFD, as_c_long(0)) };
+
+  assert!(duplicate_flags >= 0);
+  assert_ne!(duplicate_flags & FD_CLOEXEC, 0);
+
+  drop(duplicate);
+
+  original
+    .write_all(b"r")
+    .expect("failed to write from original after dropping cloexec duplicate descriptor");
+
+  let mut received = [0_u8; 1];
+
+  peer
+    .read_exact(&mut received)
+    .expect("failed to read byte from peer after original wrote post-cloexec-duplicate-drop");
+
+  assert_eq!(received, [b'r']);
+}
+
+#[test]
 fn fcntl_dupfd_cloexec_negative_minimum_sets_einval() {
   let (path, file) = create_read_only_temp_file(b"x");
 

@@ -253,6 +253,25 @@ fn opendir_missing_path_with_dot_suffix_returns_null_and_errno_enoent() {
 }
 
 #[test]
+fn opendir_missing_path_with_dot_slash_suffix_returns_null_and_errno_enoent() {
+  let temp_dir = TempDir::new("i036-missing-dot-slash");
+  let missing = temp_dir.path().join("does-not-exist");
+  let mut missing_with_dot_slash = missing.as_os_str().as_bytes().to_vec();
+
+  missing_with_dot_slash.extend_from_slice(b"/./");
+
+  let missing_c =
+    CString::new(missing_with_dot_slash).expect("missing path with dot-slash suffix must be valid");
+
+  write_errno(0);
+  // SAFETY: `missing_c` is a valid NUL-terminated path string.
+  let dir = unsafe { opendir(missing_c.as_ptr().cast::<c_char>()) };
+
+  assert!(dir.is_null());
+  assert_eq!(read_errno(), ENOENT);
+}
+
+#[test]
 fn opendir_null_path_returns_null_and_errno_efault() {
   write_errno(0);
   // SAFETY: null path pointer is intentionally used to validate errno propagation.

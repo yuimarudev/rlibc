@@ -710,6 +710,14 @@ fn prefix_looks_like_call_expression(prefix: &str) -> bool {
     skip_trailing_whitespace(bytes, &mut open_cursor);
   }
 
+  if !bytes[..open_cursor].is_empty()
+    && bytes[..open_cursor].iter().all(|byte| {
+      byte.is_ascii_whitespace() || matches!(*byte, b'(' | b'!' | b'~' | b'+' | b'-' | b'*' | b'&')
+    })
+  {
+    return true;
+  }
+
   false
 }
 
@@ -1478,6 +1486,22 @@ fn setjmp_header_declares_jmp_buf_and_jump_functions() {
   assert!(
     setjmp_header.contains("#undef RLIBC_NORETURN"),
     "setjmp.h should not leak helper noreturn macro outside header scope",
+  );
+}
+
+#[test]
+fn setjmp_header_clears_helper_before_include_guard() {
+  let setjmp_header = read_header("setjmp.h");
+  let clear_helper_pos = setjmp_header
+    .find("#ifdef RLIBC_NORETURN")
+    .unwrap_or_else(|| panic!("setjmp.h should start with helper macro cleanup guard"));
+  let include_guard_pos = setjmp_header
+    .find("#ifndef RLIBC_SETJMP_H")
+    .unwrap_or_else(|| panic!("setjmp.h should declare include guard"));
+
+  assert!(
+    clear_helper_pos < include_guard_pos,
+    "setjmp.h should clear pre-defined RLIBC_NORETURN before include guard short-circuits re-includes",
   );
 }
 

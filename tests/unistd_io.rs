@@ -2667,6 +2667,34 @@ fn send_non_socket_fd_with_huge_length_returns_minus_one_and_errno_enotsock() {
 }
 
 #[test]
+fn send_non_socket_fd_with_nosignal_flag_returns_minus_one_and_errno_enotsock() {
+  let file_path = unique_temp_path("send-non-socket-nosignal");
+  let payload = [0x47_u8];
+
+  fs::write(&file_path, b"not-socket").expect("failed to create non-socket nosignal fd test file");
+
+  let file = File::open(&file_path).expect("failed to open non-socket nosignal fd test file");
+
+  set_errno(0);
+
+  // SAFETY: payload pointer is valid and descriptor is intentionally not a socket.
+  let sent = unsafe {
+    send(
+      file.as_raw_fd(),
+      payload.as_ptr().cast::<c_void>(),
+      sz(payload.len()),
+      MSG_NOSIGNAL,
+    )
+  };
+
+  assert_eq!(sent, -1);
+  assert_eq!(errno_value(), ENOTSOCK);
+
+  drop(file);
+  fs::remove_file(file_path).expect("failed to remove non-socket nosignal fd test file");
+}
+
+#[test]
 fn send_non_socket_fd_with_nosignal_and_dontwait_flags_returns_minus_one_and_errno_enotsock() {
   let file_path = unique_temp_path("send-non-socket-flags");
   let payload = [0x46_u8];

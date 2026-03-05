@@ -310,6 +310,39 @@ fn glob_escaped_separator_matches_directory_boundary() {
 }
 
 #[test]
+fn glob_triple_backslash_separator_matches_single_backslash_directory() {
+  let temp_dir = TempDir::new();
+  let single_backslash_dir = temp_dir.path().join(r"nested\");
+  let double_backslash_dir = temp_dir.path().join(r"nested\\");
+
+  fs::create_dir(&single_backslash_dir).unwrap_or_else(|error| {
+    panic!(
+      "failed to create directory {}: {error}",
+      single_backslash_dir.display()
+    );
+  });
+  fs::create_dir(&double_backslash_dir).unwrap_or_else(|error| {
+    panic!(
+      "failed to create directory {}: {error}",
+      double_backslash_dir.display()
+    );
+  });
+  create_file(&single_backslash_dir.join("item.txt"));
+  create_file(&double_backslash_dir.join("item.txt"));
+
+  let pattern = pattern(temp_dir.path(), r"nested\\\/item.txt");
+  let mut state = GlobState::new();
+  let result = run_glob(&pattern, 0, &mut state);
+
+  assert_eq!(result, 0);
+  assert_eq!(state.path_count(), 1);
+  assert_eq!(
+    state.paths(),
+    vec![stringify_path(&single_backslash_dir.join("item.txt"))]
+  );
+}
+
+#[test]
 fn glob_repeated_separator_in_pattern_is_preserved_in_result_path() {
   let temp_dir = TempDir::new();
   let nested_dir = temp_dir.path().join("nested");

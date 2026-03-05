@@ -389,6 +389,58 @@ fn dynamic_clockid_alias_for_near_max_fd_matches_static_tai_result_class() {
 }
 
 #[test]
+fn dynamic_clockid_alias_for_near_max_fd_after_null_timespec_matches_static_tai_errno_contract() {
+  let near_max_fd = c_int::MAX - 1;
+  let alias_clock_id = fd_to_clockid(near_max_fd);
+  let mut alias_ts = timespec {
+    tv_sec: 955,
+    tv_nsec: 966,
+  };
+  let alias_before = alias_ts;
+  let mut static_ts = timespec {
+    tv_sec: 977,
+    tv_nsec: 988,
+  };
+  let static_before = static_ts;
+
+  assert_eq!(alias_clock_id, CLOCK_TAI);
+
+  write_errno(EINVAL);
+  let alias_null_result = clock_gettime(alias_clock_id, ptr::null_mut());
+
+  assert_eq!(alias_null_result, -1);
+  assert_eq!(read_errno(), EFAULT);
+
+  write_errno(EFAULT);
+  let alias_result = clock_gettime(alias_clock_id, &raw mut alias_ts);
+  let alias_errno = read_errno();
+
+  write_errno(EFAULT);
+  let static_result = clock_gettime(CLOCK_TAI, &raw mut static_ts);
+  let static_errno = read_errno();
+
+  assert_eq!(alias_result, static_result);
+
+  if alias_result == 0 {
+    assert!(alias_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&alias_ts.tv_nsec));
+    assert_eq!(alias_errno, EFAULT);
+
+    assert!(static_ts.tv_sec >= 0);
+    assert!((0..1_000_000_000).contains(&static_ts.tv_nsec));
+    assert_eq!(static_errno, EFAULT);
+
+    return;
+  }
+
+  assert_eq!(alias_result, -1);
+  assert_eq!(alias_errno, EINVAL);
+  assert_eq!(alias_ts, alias_before);
+  assert_eq!(static_errno, EINVAL);
+  assert_eq!(static_ts, static_before);
+}
+
+#[test]
 fn dynamic_clockid_alias_for_min_fd_after_null_timespec_matches_zero_fd_errno_contract() {
   let mut min_ts = timespec {
     tv_sec: 505,

@@ -1260,6 +1260,65 @@ fn pthread_rwlock_failed_trywrlock_while_reader_held_still_allows_other_reader_t
 }
 
 #[test]
+fn pthread_rwlock_failed_trywrlock_with_mixed_readers_remains_ebusy_until_all_release() {
+  let mut rwlock = new_rwlock();
+
+  init_rwlock(&mut rwlock);
+
+  let rwlock_ptr = ptr::from_mut(&mut rwlock);
+  let rwlock_addr = rwlock_ptr.addr();
+  let (ready_tx, ready_rx) = mpsc::channel::<()>();
+  let (release_tx, release_rx) = mpsc::channel::<()>();
+  let (done_tx, done_rx) = mpsc::channel::<()>();
+
+  // SAFETY: `rwlock_ptr` points to initialized lock storage.
+  assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+
+  for _ in 0..3 {
+    // SAFETY: writer try-reentry while current thread holds read ownership must fail.
+    assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+  }
+
+  let reader = thread::spawn(move || {
+    let rwlock_ptr = rwlock_addr as *mut pthread_rwlock_t;
+    // SAFETY: pointer is derived from a live lock object for the duration of this test.
+    assert_eq!(unsafe { pthread_rwlock_rdlock(rwlock_ptr) }, 0);
+    ready_tx
+      .send(())
+      .expect("failed to signal mixed reader ready");
+    release_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("failed to receive mixed reader release signal");
+    // SAFETY: current thread holds a read lock acquired above.
+    assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+    done_tx
+      .send(())
+      .expect("failed to signal mixed reader done");
+  });
+
+  ready_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("mixed reader failed to acquire read lock");
+  // SAFETY: both current thread and the spawned thread hold read ownership.
+  assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+  // SAFETY: release current-thread read ownership.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: spawned reader still holds lock, so writer acquisition remains busy.
+  assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, EBUSY);
+  release_tx.send(()).expect("failed to release mixed reader");
+  done_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("mixed reader failed to release read lock");
+  reader.join().expect("mixed reader thread panicked");
+  // SAFETY: all readers released; writer acquisition must now succeed.
+  assert_eq!(unsafe { pthread_rwlock_trywrlock(rwlock_ptr) }, 0);
+  // SAFETY: current thread holds writer ownership acquired above.
+  assert_eq!(unsafe { pthread_rwlock_unlock(rwlock_ptr) }, 0);
+  // SAFETY: lock is initialized and unlocked.
+  assert_eq!(unsafe { pthread_rwlock_destroy(rwlock_ptr) }, 0);
+}
+
+#[test]
 fn pthread_rwlock_tryrdlock_returns_ebusy_for_same_thread_writer_reentry() {
   let mut rwlock = new_rwlock();
 
