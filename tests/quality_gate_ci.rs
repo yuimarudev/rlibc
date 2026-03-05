@@ -427,6 +427,40 @@ fn quality_gate_script_full_profile_optional_adapter_order_is_stable() {
 }
 
 #[test]
+fn quality_gate_script_full_profile_optional_adapter_run_steps_remain_ordered() {
+  let script = read_repository_file("scripts/quality-gate.sh");
+  let full_body = extract_function_body_lines(&script, "run_full_profile() {");
+  let libc_adapter_step = "run_step 900 bash scripts/conformance/libc-test-adapter.sh --profile docs/conformance/libc-test-smoke.txt";
+  let ltp_adapter_step = concat!(
+    "run_step 1800 bash scripts/conformance/ltp-openposix-adapter.sh --suite \"${",
+    "RLIBC_LTP_SUITE:-ltp}\" --suite-root \"${",
+    "RLIBC_LTP_SUITE_ROOT}\""
+  );
+  let xfail_ledger_step = "run_step 60 awk -F',' 'NR == 1 { exit $1 == \"suite\" && $2 == \"case\" ? 0 : 1 }' docs/conformance/xfail-ledger.csv";
+  let libc_adapter_step_index = full_body
+    .iter()
+    .position(|line| line == libc_adapter_step)
+    .unwrap_or_else(|| panic!("full profile must contain adapter step: {libc_adapter_step}"));
+  let ltp_adapter_step_index = full_body
+    .iter()
+    .position(|line| line == ltp_adapter_step)
+    .unwrap_or_else(|| panic!("full profile must contain adapter step: {ltp_adapter_step}"));
+  let xfail_ledger_step_index = full_body
+    .iter()
+    .position(|line| line == xfail_ledger_step)
+    .unwrap_or_else(|| panic!("full profile must contain xfail-ledger step: {xfail_ledger_step}"));
+
+  assert!(
+    libc_adapter_step_index < ltp_adapter_step_index,
+    "full profile must execute libc-test adapter step before ltp-openposix adapter step"
+  );
+  assert!(
+    ltp_adapter_step_index < xfail_ledger_step_index,
+    "full profile must execute xfail-ledger validation after optional adapter run steps"
+  );
+}
+
+#[test]
 fn quality_gate_script_full_profile_gates_ltp_adapter_on_env_and_executable() {
   let script = read_repository_file("scripts/quality-gate.sh");
 

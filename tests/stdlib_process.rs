@@ -611,6 +611,10 @@ fn atexit_runs_handlers_in_reverse_registration_order() {
     "atexit order scenario should not terminate due to signal: {output_context}"
   );
   assert!(
+    output.status.success(),
+    "atexit order scenario should report success: {output_context}"
+  );
+  assert!(
     runner_banner_count >= 1,
     "atexit order scenario should start child test harness before status-preserving termination: {output_context}"
   );
@@ -687,6 +691,10 @@ fn atexit_runs_handlers_registered_during_exit() {
     output.status.signal(),
     None,
     "atexit dynamic-order scenario should not terminate due to signal: {output_context}"
+  );
+  assert!(
+    output.status.success(),
+    "atexit dynamic-order scenario should report success: {output_context}"
   );
   assert!(
     runner_banner_count >= 1,

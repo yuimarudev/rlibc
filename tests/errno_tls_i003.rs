@@ -3881,3 +3881,176 @@ fn three_level_many_branch_generations_start_zero_and_preserve_trunk_errno() {
     "branch/leaf writes must not clobber main-thread errno",
   );
 }
+
+#[test]
+fn three_level_branch_rounds_keep_zero_start_after_trunk_rewrites() {
+  const MAIN_ERRNO: c_int = -3030;
+  const TRUNK_BOOT_WRITE: c_int = 4040;
+  const ROUND_SPECS: [(c_int, c_int, c_int); 4] = [
+    (5001, 6101, 7101),
+    (-5002, -6102, -7102),
+    (5003, 6103, 7103),
+    (-5004, -6104, -7104),
+  ];
+
+  write_errno(MAIN_ERRNO);
+
+  let main_slot = __errno_location() as usize;
+  let trunk_summary = thread::spawn(|| {
+    let trunk_slot = __errno_location() as usize;
+    let trunk_start = read_errno();
+
+    write_errno(TRUNK_BOOT_WRITE);
+
+    let mut round_reports = Vec::new();
+
+    for (round_index, &(trunk_round_write, branch_round_write, leaf_round_write)) in
+      ROUND_SPECS.iter().enumerate()
+    {
+      write_errno(trunk_round_write);
+      let trunk_before_branch = read_errno();
+      let branch_summary = thread::spawn(move || {
+        let branch_slot = __errno_location() as usize;
+        let branch_start = read_errno();
+        let branch_before = read_errno();
+
+        write_errno(branch_round_write);
+
+        let leaf_summary = thread::spawn(move || {
+          let leaf_slot = __errno_location() as usize;
+          let leaf_start = read_errno();
+          let leaf_before = read_errno();
+
+          write_errno(leaf_round_write);
+
+          (leaf_slot, leaf_start, leaf_before, read_errno())
+        })
+        .join()
+        .expect("leaf thread panicked");
+        let branch_finish = read_errno();
+
+        (
+          branch_slot,
+          branch_start,
+          branch_before,
+          branch_finish,
+          leaf_summary,
+        )
+      })
+      .join()
+      .expect("branch thread panicked");
+      let trunk_after_branch = read_errno();
+
+      round_reports.push((
+        round_index,
+        trunk_round_write,
+        branch_round_write,
+        leaf_round_write,
+        trunk_before_branch,
+        trunk_after_branch,
+        branch_summary,
+      ));
+    }
+
+    let trunk_finish = read_errno();
+
+    (trunk_slot, trunk_start, trunk_finish, round_reports)
+  })
+  .join()
+  .expect("trunk thread panicked");
+  let (trunk_slot, trunk_start, trunk_finish, round_reports) = trunk_summary;
+
+  assert_eq!(trunk_start, 0, "trunk thread must start with zero errno");
+  assert_eq!(
+    round_reports.len(),
+    ROUND_SPECS.len(),
+    "expected one report per trunk rewrite round",
+  );
+  assert_eq!(
+    trunk_finish,
+    ROUND_SPECS[ROUND_SPECS.len() - 1].0,
+    "branch/leaf writes must not clobber final trunk rewrite value",
+  );
+
+  for (
+    round_index,
+    trunk_round_write,
+    branch_round_write,
+    leaf_round_write,
+    trunk_before_branch,
+    trunk_after_branch,
+    branch_summary,
+  ) in &round_reports
+  {
+    let (branch_slot, branch_start, branch_before, branch_finish, leaf_summary) = branch_summary;
+    let (leaf_slot, leaf_start, leaf_before, leaf_finish) = leaf_summary;
+
+    assert_eq!(
+      *trunk_before_branch, *trunk_round_write,
+      "round {round_index}: trunk rewrite value must be visible before spawning branch",
+    );
+    assert_eq!(
+      *trunk_after_branch, *trunk_round_write,
+      "round {round_index}: branch/leaf writes must not clobber trunk rewrite value",
+    );
+    assert_eq!(
+      *branch_start, 0,
+      "round {round_index}: branch thread must start with zero errno",
+    );
+    assert_eq!(
+      *branch_before, 0,
+      "round {round_index}: branch thread must observe zero before first write",
+    );
+    assert_eq!(
+      *branch_finish, *branch_round_write,
+      "round {round_index}: branch thread must preserve its own errno write",
+    );
+    assert_eq!(
+      *leaf_start, 0,
+      "round {round_index}: leaf thread must start with zero errno",
+    );
+    assert_eq!(
+      *leaf_before, 0,
+      "round {round_index}: leaf thread must observe zero before first write",
+    );
+    assert_eq!(
+      *leaf_finish, *leaf_round_write,
+      "round {round_index}: leaf thread must preserve its own errno write",
+    );
+    assert_ne!(
+      *branch_slot, main_slot,
+      "round {round_index}: branch thread must not alias main-thread errno storage",
+    );
+    assert_ne!(
+      *branch_slot, trunk_slot,
+      "round {round_index}: branch thread must not alias trunk-thread errno storage",
+    );
+    assert_ne!(
+      *leaf_slot, main_slot,
+      "round {round_index}: leaf thread must not alias main-thread errno storage",
+    );
+    assert_ne!(
+      *leaf_slot, trunk_slot,
+      "round {round_index}: leaf thread must not alias trunk-thread errno storage",
+    );
+    assert_ne!(
+      *leaf_slot, *branch_slot,
+      "round {round_index}: leaf thread must not alias branch-thread errno storage",
+    );
+  }
+
+  assert_ne!(
+    trunk_slot, main_slot,
+    "trunk thread must not alias main-thread errno storage",
+  );
+  assert_eq!(
+    __errno_location() as usize,
+    main_slot,
+    "main-thread errno pointer must remain stable across trunk rewrite rounds",
+  );
+  assert_eq!(
+    read_errno(),
+    MAIN_ERRNO,
+    "trunk/branch/leaf writes must not clobber main-thread errno",
+  );
+}

@@ -1,8 +1,8 @@
-use core::ffi::{c_char, c_int, CStr};
+use core::ffi::{CStr, c_char, c_int};
 use core::ptr;
 use rlibc::errno::__errno_location;
 use rlibc::locale::{
-  setlocale, LC_ALL, LC_COLLATE, LC_CTYPE, LC_MESSAGES, LC_MONETARY, LC_NUMERIC, LC_TIME,
+  LC_ALL, LC_COLLATE, LC_CTYPE, LC_MESSAGES, LC_MONETARY, LC_NUMERIC, LC_TIME, setlocale,
 };
 use std::env;
 use std::ffi::OsString;
@@ -846,8 +846,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_category_and_lang_for_all
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_and_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_and_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -869,8 +869,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_and_lan
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_supported_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_supported_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -892,8 +892,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_su
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_empty_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_empty_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -915,8 +915,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_em
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_unset_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_unset_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -937,8 +937,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_un
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_unsupported_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_unsupported_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -960,8 +960,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_non_utf8_category_with_un
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_non_utf8_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_non_utf8_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -983,8 +983,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_non_ut
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_unsupported_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_unsupported_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1006,8 +1006,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_unsupp
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_supported_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_supported_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1029,8 +1029,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_empty_category_and_suppor
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_supported_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_supported_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1052,8 +1052,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_non_utf8_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_non_utf8_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1075,8 +1075,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_empty_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_empty_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1098,8 +1098,8 @@ fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with
 }
 
 #[test]
-fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_unset_lang_for_all_categories(
-) {
+fn setlocale_empty_category_locale_prefers_lc_all_over_unsupported_category_with_unset_lang_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1206,8 +1206,8 @@ fn setlocale_empty_category_locale_rejects_non_utf8_lc_all_when_category_unset_f
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_unsupported_lc_all_when_category_unset_for_all_categories(
-) {
+fn setlocale_empty_category_locale_rejects_unsupported_lc_all_when_category_unset_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1271,8 +1271,8 @@ fn setlocale_empty_category_locale_rejects_unsupported_lc_all_when_each_category
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_unsupported_lc_all_when_each_category_variable_is_supported(
-) {
+fn setlocale_empty_category_locale_rejects_unsupported_lc_all_when_each_category_variable_is_supported()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1304,8 +1304,8 @@ fn setlocale_empty_category_locale_rejects_unsupported_lc_all_when_each_category
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_non_utf8_lc_all_when_each_category_variable_is_supported(
-) {
+fn setlocale_empty_category_locale_rejects_non_utf8_lc_all_when_each_category_variable_is_supported()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1496,8 +1496,8 @@ fn setlocale_empty_category_locale_uses_lang_when_each_category_variable_is_unse
 }
 
 #[test]
-fn setlocale_empty_category_locale_falls_back_to_c_when_each_category_variable_is_unset_and_lc_all_and_lang_are_empty(
-) {
+fn setlocale_empty_category_locale_falls_back_to_c_when_each_category_variable_is_unset_and_lc_all_and_lang_are_empty()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1580,8 +1580,8 @@ fn setlocale_empty_category_locale_rejects_unsupported_lang_when_each_category_v
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_non_utf8_lang_when_each_category_variable_is_unset_and_lc_all_empty(
-) {
+fn setlocale_empty_category_locale_rejects_non_utf8_lang_when_each_category_variable_is_unset_and_lc_all_empty()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1612,8 +1612,8 @@ fn setlocale_empty_category_locale_rejects_non_utf8_lang_when_each_category_vari
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_unsupported_lang_when_each_category_variable_is_unset_and_lc_all_empty(
-) {
+fn setlocale_empty_category_locale_rejects_unsupported_lang_when_each_category_variable_is_unset_and_lc_all_empty()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1701,8 +1701,8 @@ fn setlocale_empty_category_locale_rejects_unsupported_category_values_for_all_c
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_unsupported_category_values_when_lang_is_unset_for_all_categories(
-) {
+fn setlocale_empty_category_locale_rejects_unsupported_category_values_when_lang_is_unset_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1732,8 +1732,8 @@ fn setlocale_empty_category_locale_rejects_unsupported_category_values_when_lang
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_unsupported_category_values_when_lang_is_empty_for_all_categories(
-) {
+fn setlocale_empty_category_locale_rejects_unsupported_category_values_when_lang_is_empty_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1885,8 +1885,8 @@ fn setlocale_empty_category_locale_rejects_non_utf8_category_values_for_all_cate
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_non_utf8_category_values_when_lang_is_unset_for_all_categories(
-) {
+fn setlocale_empty_category_locale_rejects_non_utf8_category_values_when_lang_is_unset_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -1916,8 +1916,8 @@ fn setlocale_empty_category_locale_rejects_non_utf8_category_values_when_lang_is
 }
 
 #[test]
-fn setlocale_empty_category_locale_rejects_non_utf8_category_values_when_lang_is_empty_for_all_categories(
-) {
+fn setlocale_empty_category_locale_rejects_non_utf8_category_values_when_lang_is_empty_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2158,8 +2158,8 @@ fn setlocale_empty_locale_rejection_then_query_preserves_errno_for_all_supported
 }
 
 #[test]
-fn setlocale_empty_locale_non_utf8_lc_all_rejection_then_query_preserves_errno_for_all_supported_categories(
-) {
+fn setlocale_empty_locale_non_utf8_lc_all_rejection_then_query_preserves_errno_for_all_supported_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2205,8 +2205,8 @@ fn setlocale_empty_locale_non_utf8_lc_all_rejection_then_query_preserves_errno_f
 }
 
 #[test]
-fn setlocale_empty_lc_all_and_unsupported_lang_rejection_then_query_preserves_errno_for_all_supported_categories(
-) {
+fn setlocale_empty_lc_all_and_unsupported_lang_rejection_then_query_preserves_errno_for_all_supported_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2253,8 +2253,8 @@ fn setlocale_empty_lc_all_and_unsupported_lang_rejection_then_query_preserves_er
 }
 
 #[test]
-fn setlocale_empty_lc_all_and_non_utf8_lang_rejection_then_query_preserves_errno_for_all_supported_categories(
-) {
+fn setlocale_empty_lc_all_and_non_utf8_lang_rejection_then_query_preserves_errno_for_all_supported_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2301,8 +2301,8 @@ fn setlocale_empty_lc_all_and_non_utf8_lang_rejection_then_query_preserves_errno
 }
 
 #[test]
-fn setlocale_empty_category_locale_non_utf8_category_rejection_then_query_preserves_errno_for_all_categories(
-) {
+fn setlocale_empty_category_locale_non_utf8_category_rejection_then_query_preserves_errno_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2349,8 +2349,8 @@ fn setlocale_empty_category_locale_non_utf8_category_rejection_then_query_preser
 }
 
 #[test]
-fn setlocale_empty_category_locale_unsupported_category_rejection_then_query_preserves_errno_for_all_categories(
-) {
+fn setlocale_empty_category_locale_unsupported_category_rejection_then_query_preserves_errno_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2397,8 +2397,8 @@ fn setlocale_empty_category_locale_unsupported_category_rejection_then_query_pre
 }
 
 #[test]
-fn setlocale_empty_category_locale_with_empty_lc_all_unsupported_category_rejection_then_query_preserves_errno_for_all_categories(
-) {
+fn setlocale_empty_category_locale_with_empty_lc_all_unsupported_category_rejection_then_query_preserves_errno_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2446,8 +2446,8 @@ fn setlocale_empty_category_locale_with_empty_lc_all_unsupported_category_reject
 }
 
 #[test]
-fn setlocale_empty_category_locale_with_empty_lc_all_non_utf8_category_rejection_then_query_preserves_errno_for_all_categories(
-) {
+fn setlocale_empty_category_locale_with_empty_lc_all_non_utf8_category_rejection_then_query_preserves_errno_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2495,8 +2495,8 @@ fn setlocale_empty_category_locale_with_empty_lc_all_non_utf8_category_rejection
 }
 
 #[test]
-fn setlocale_empty_category_locale_with_empty_lc_all_non_utf8_lang_rejection_then_query_preserves_errno_for_all_categories(
-) {
+fn setlocale_empty_category_locale_with_empty_lc_all_non_utf8_lang_rejection_then_query_preserves_errno_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2543,8 +2543,8 @@ fn setlocale_empty_category_locale_with_empty_lc_all_non_utf8_lang_rejection_the
 }
 
 #[test]
-fn setlocale_empty_category_locale_with_empty_lc_all_unsupported_lang_rejection_then_query_preserves_errno_for_all_categories(
-) {
+fn setlocale_empty_category_locale_with_empty_lc_all_unsupported_lang_rejection_then_query_preserves_errno_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2698,8 +2698,8 @@ fn setlocale_empty_lc_all_with_non_utf8_category_variable_rejection_then_query_p
 }
 
 #[test]
-fn setlocale_empty_lc_all_with_empty_category_variable_and_unsupported_lang_rejection_then_query_preserves_errno(
-) {
+fn setlocale_empty_lc_all_with_empty_category_variable_and_unsupported_lang_rejection_then_query_preserves_errno()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2752,8 +2752,8 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_unsupported_lang_reje
 }
 
 #[test]
-fn setlocale_empty_lc_all_with_empty_category_variable_and_non_utf8_lang_rejection_then_query_preserves_errno(
-) {
+fn setlocale_empty_lc_all_with_empty_category_variable_and_non_utf8_lang_rejection_then_query_preserves_errno()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 
@@ -2974,8 +2974,8 @@ fn setlocale_empty_lc_all_uses_supported_category_variables_and_preserves_errno(
 }
 
 #[test]
-fn setlocale_empty_category_locale_with_empty_lc_all_supported_category_and_non_utf8_lang_preserves_errno_for_all_categories(
-) {
+fn setlocale_empty_category_locale_with_empty_lc_all_supported_category_and_non_utf8_lang_preserves_errno_for_all_categories()
+ {
   let _env_lock = lock_locale_environment();
   let _snapshot = EnvironmentSnapshot::capture(&LOCALE_ENV_KEYS);
 

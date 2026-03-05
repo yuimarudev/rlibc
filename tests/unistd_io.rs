@@ -1767,6 +1767,27 @@ fn recv_invalid_fd_with_waitall_and_peek_flags_returns_minus_one_and_errno_ebadf
 }
 
 #[test]
+fn recv_invalid_fd_with_zero_length_and_waitall_and_peek_flags_returns_minus_one_and_errno_ebadf() {
+  let mut byte = [0x2B_u8; 1];
+
+  set_errno(0);
+
+  // SAFETY: `byte` is writable and fd is intentionally invalid.
+  let received = unsafe {
+    recv(
+      -1,
+      byte.as_mut_ptr().cast::<c_void>(),
+      sz(0),
+      MSG_WAITALL | MSG_PEEK,
+    )
+  };
+
+  assert_eq!(received, -1);
+  assert_eq!(errno_value(), EBADF);
+  assert_eq!(byte, [0x2B_u8; 1]);
+}
+
+#[test]
 fn recv_dontwait_on_empty_socket_returns_eagain() {
   let (reader, _writer) = std::os::unix::net::UnixStream::pair()
     .expect("failed to create unix stream pair for dontwait recv test");
@@ -2646,6 +2667,34 @@ fn send_non_socket_fd_with_huge_length_returns_minus_one_and_errno_enotsock() {
 }
 
 #[test]
+fn send_non_socket_fd_with_nosignal_and_dontwait_flags_returns_minus_one_and_errno_enotsock() {
+  let file_path = unique_temp_path("send-non-socket-flags");
+  let payload = [0x46_u8];
+
+  fs::write(&file_path, b"not-socket").expect("failed to create non-socket flag fd test file");
+
+  let file = File::open(&file_path).expect("failed to open non-socket flag fd test file");
+
+  set_errno(0);
+
+  // SAFETY: payload pointer is valid and descriptor is intentionally not a socket.
+  let sent = unsafe {
+    send(
+      file.as_raw_fd(),
+      payload.as_ptr().cast::<c_void>(),
+      sz(payload.len()),
+      MSG_NOSIGNAL | MSG_DONTWAIT,
+    )
+  };
+
+  assert_eq!(sent, -1);
+  assert_eq!(errno_value(), ENOTSOCK);
+
+  drop(file);
+  fs::remove_file(file_path).expect("failed to remove non-socket flag fd test file");
+}
+
+#[test]
 fn send_nosignal_after_peer_shutdown_returns_minus_one_and_errno_epipe() {
   let payload = [0x66_u8];
   let (reader, writer) = std::os::unix::net::UnixStream::pair()
@@ -2787,6 +2836,35 @@ fn recv_non_socket_fd_with_huge_length_returns_minus_one_and_errno_enotsock() {
 
   drop(file);
   fs::remove_file(file_path).expect("failed to remove recv non-socket huge fd test file");
+}
+
+#[test]
+fn recv_non_socket_fd_with_waitall_and_peek_and_dontwait_flags_returns_minus_one_and_errno_enotsock()
+ {
+  let file_path = unique_temp_path("recv-non-socket-flags");
+  let mut payload = [0x57_u8];
+
+  fs::write(&file_path, b"not-socket").expect("failed to create recv non-socket flag fd test file");
+
+  let file = File::open(&file_path).expect("failed to open recv non-socket flag fd test file");
+
+  set_errno(0);
+
+  // SAFETY: payload pointer is valid and descriptor is intentionally not a socket.
+  let received = unsafe {
+    recv(
+      file.as_raw_fd(),
+      payload.as_mut_ptr().cast::<c_void>(),
+      sz(payload.len()),
+      MSG_WAITALL | MSG_PEEK | MSG_DONTWAIT,
+    )
+  };
+
+  assert_eq!(received, -1);
+  assert_eq!(errno_value(), ENOTSOCK);
+
+  drop(file);
+  fs::remove_file(file_path).expect("failed to remove recv non-socket flag fd test file");
 }
 
 #[test]

@@ -1293,6 +1293,7 @@ fn exported_symbol_detection_rejects_statement_context_function_call_text() {
     "((fn_t)getpid)(0);",
     "getpid",
   ));
+  assert!(!line_declares_exported_symbol("((getpid))(0);", "getpid",));
   assert!(!line_declares_exported_symbol("arr[getpid()];", "getpid"));
 }
 

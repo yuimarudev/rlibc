@@ -817,6 +817,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     name_bytes,
     "project_name_cstr() payload should match project_name() bytes"
   );
+  assert_eq!(
+    c_name_again.to_bytes(),
+    name_bytes,
+    "repeated project_name_cstr() payload should still match project_name() bytes"
+  );
   assert!(
     name_bytes.iter().all(|byte| byte.is_ascii_lowercase()
       || byte.is_ascii_digit()
@@ -888,6 +893,11 @@ fn project_name_c_string_accessors_stay_consistent() {
     c_name.to_bytes_with_nul(),
     c_name_bytes,
     "project_name_cstr().to_bytes_with_nul() should match project_name_cstr_bytes()"
+  );
+  assert_eq!(
+    c_name_again.to_bytes_with_nul(),
+    c_name_bytes,
+    "project_name_cstr() repeated calls should expose identical NUL-terminated bytes"
   );
   assert_eq!(
     rlibc::project_name_cstr_ptr().cast::<u8>(),
