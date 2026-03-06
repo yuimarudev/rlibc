@@ -4,12 +4,16 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use rlibc::abi::errno::EINVAL;
-use rlibc::abi::types::{c_char, c_int, c_long, size_t};
+use rlibc::abi::types::{c_char, c_int, c_long, size_t, ssize_t};
 use rlibc::errno::__errno_location;
-use rlibc::stdio::{_IOFBF, _IOLBF, _IONBF, FILE, fflush, fprintf, setvbuf, vfprintf};
+use rlibc::stdio::{
+  _IOFBF, _IOLBF, _IONBF, BUFSIZ, FILE, fflush, fprintf, setbuf, setbuffer, setlinebuf, setvbuf,
+  vfprintf,
+};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const EOF_STATUS: c_int = -1;
+const SEEK_SET: c_int = 0;
 const SEEK_END: c_int = 2;
 
 #[repr(C)]
@@ -26,6 +30,7 @@ unsafe extern "C" {
   fn fileno(stream: *mut FILE) -> c_int;
   fn fputs(s: *const i8, stream: *mut FILE) -> c_int;
   fn lseek(fd: c_int, offset: c_long, whence: c_int) -> c_long;
+  fn read(fd: c_int, buf: *mut c_void, count: usize) -> ssize_t;
   fn tmpfile() -> *mut FILE;
   #[link_name = "stdin"]
   static mut host_stdin: *mut FILE;
@@ -56,6 +61,24 @@ fn as_size_t(value: usize) -> size_t {
     .unwrap_or_else(|_| unreachable!("usize does not fit in size_t on this target"))
 }
 
+fn as_c_int(value: usize) -> c_int {
+  c_int::try_from(value).unwrap_or_else(|_| unreachable!("usize does not fit in c_int"))
+}
+
+fn as_c_long(value: usize) -> c_long {
+  c_long::try_from(value).unwrap_or_else(|_| unreachable!("usize does not fit in c_long"))
+}
+
+fn as_ssize_t(value: usize) -> ssize_t {
+  ssize_t::try_from(value).unwrap_or_else(|_| unreachable!("usize does not fit in ssize_t"))
+}
+
+fn visible_bytes(c_string: &[u8]) -> &[u8] {
+  c_string
+    .strip_suffix(b"\0")
+    .unwrap_or_else(|| unreachable!("test payloads must be NUL-terminated"))
+}
+
 fn synthetic_untracked_stream() -> *mut FILE {
   static NEXT_STREAM_ID: AtomicUsize = AtomicUsize::new(1);
   const BASE_ADDR: usize = 0x2000_0000_0000;
@@ -75,8 +98,86 @@ fn test_lock() -> MutexGuard<'static, ()> {
   }
 }
 
+fn acquire_configured_tmpfile(
+  buffer: *mut c_char,
+  mode: c_int,
+  size: usize,
+  errno_value: c_int,
+  context: &str,
+) -> (*mut FILE, Vec<*mut FILE>) {
+  let mut retry_count = 0_usize;
+  let max_retry_count = 64_usize;
+  let mut skipped_streams = Vec::new();
+
+  while retry_count < max_retry_count {
+    // SAFETY: host libc provides a valid stream or null on allocation failure.
+    let stream = unsafe { tmpfile() };
+
+    assert!(!stream.is_null(), "{context}");
+
+    write_errno(errno_value);
+
+    // SAFETY: `stream` and `buffer` are valid for this call.
+    let setvbuf_status = unsafe { setvbuf(stream, buffer, mode, as_size_t(size)) };
+
+    if setvbuf_status == 0 {
+      assert_eq!(read_errno(), errno_value);
+
+      return (stream, skipped_streams);
+    }
+
+    assert_eq!(setvbuf_status, EOF_STATUS);
+    assert_eq!(read_errno(), EINVAL);
+    skipped_streams.push(stream);
+    retry_count = retry_count.saturating_add(1);
+  }
+
+  unreachable!("{context}");
+}
+
+fn close_tmpfile_streams(streams: Vec<*mut FILE>) {
+  for stream in streams {
+    // SAFETY: each skipped stream came from `tmpfile` and remained open in the test.
+    let close_status = unsafe { fclose(stream) };
+
+    assert_eq!(
+      close_status, 0,
+      "closing skipped tmpfile stream must succeed"
+    );
+  }
+}
+
+fn assert_fd_end_offset(fd: c_int, expected_len: usize, context: &str) {
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(end_offset, as_c_long(expected_len), "{context}");
+}
+
+fn assert_fd_content(fd: c_int, expected: &[u8], context: &str) {
+  assert_fd_end_offset(fd, expected.len(), context);
+
+  // SAFETY: valid descriptor and `SEEK_SET` are passed to host `lseek`.
+  let seek_status = unsafe { lseek(fd, 0, SEEK_SET) };
+
+  assert_eq!(seek_status, 0, "{context}: rewinding fd must succeed");
+
+  let mut actual = vec![0_u8; expected.len()];
+  // SAFETY: descriptor is readable and `actual` points to writable storage.
+  let read_status = unsafe { read(fd, actual.as_mut_ptr().cast(), actual.len()) };
+
+  assert_eq!(
+    read_status,
+    as_ssize_t(expected.len()),
+    "{context}: readback length must match the visible bytes",
+  );
+  assert_eq!(actual, expected, "{context}");
+}
+
 #[test]
 fn setvbuf_rejects_null_stream_with_einval() {
+  let _guard = test_lock();
+
   write_errno(0);
 
   // SAFETY: null pointer call is intentionally used to verify error handling.
@@ -88,6 +189,7 @@ fn setvbuf_rejects_null_stream_with_einval() {
 
 #[test]
 fn setvbuf_rejects_unknown_mode_with_einval() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
 
@@ -102,6 +204,7 @@ fn setvbuf_rejects_unknown_mode_with_einval() {
 
 #[test]
 fn setvbuf_rejects_zero_size_for_buffered_modes() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
   let modes = [_IOFBF, _IOLBF];
@@ -119,6 +222,7 @@ fn setvbuf_rejects_zero_size_for_buffered_modes() {
 
 #[test]
 fn setvbuf_accepts_unbuffered_mode_with_null_buffer() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
 
@@ -133,6 +237,7 @@ fn setvbuf_accepts_unbuffered_mode_with_null_buffer() {
 
 #[test]
 fn setvbuf_accepts_unbuffered_mode_with_non_zero_size() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
   let mut user_buffer = [0_u8; 8];
@@ -214,14 +319,9 @@ fn setvbuf_unbuffered_mode_makes_vfprintf_output_immediately_observable() {
   let fd = unsafe { fileno(stream) };
 
   assert!(fd >= 0, "stream must expose file descriptor");
-  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
-  let end_offset = unsafe { lseek(fd, 0, SEEK_END) };
-  let payload_len = payload.len().saturating_sub(1);
-  let expected_end = c_long::try_from(payload_len)
-    .unwrap_or_else(|_| unreachable!("payload length must fit c_long"));
-
-  assert_eq!(
-    end_offset, expected_end,
+  assert_fd_content(
+    fd,
+    visible_bytes(payload),
     "unbuffered mode must make vfprintf output observable without explicit fflush",
   );
 
@@ -236,6 +336,197 @@ fn setvbuf_unbuffered_mode_makes_vfprintf_output_immediately_observable() {
 
     assert_eq!(skipped_close_status, 0);
   }
+}
+
+#[test]
+fn setbuffer_null_buffer_makes_vfprintf_output_immediately_observable() {
+  let _guard = test_lock();
+  let payload = b"i023-setbuffer-null-ionbf\0";
+  let mut empty_ap = SysVVaList {
+    gp_offset: 48,
+    fp_offset: 0,
+    overflow_arg_area: ptr::null_mut(),
+    reg_save_area: ptr::null_mut(),
+  };
+
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for setbuffer(null) test",
+  );
+
+  write_errno(1717);
+
+  // SAFETY: `stream` is valid and `setbuffer` accepts a null buffer for unbuffered mode.
+  unsafe { setbuffer(stream, ptr::null_mut(), as_size_t(32)) };
+
+  assert_eq!(
+    read_errno(),
+    1717,
+    "successful setbuffer must preserve errno"
+  );
+
+  write_errno(1919);
+
+  // SAFETY: stream, format string, and `va_list` pointer are valid.
+  let written = unsafe {
+    vfprintf(
+      stream,
+      payload.as_ptr().cast(),
+      core::ptr::addr_of_mut!(empty_ap).cast(),
+    )
+  };
+
+  assert!(written >= 0, "host-backed vfprintf write must succeed");
+  assert_eq!(read_errno(), 1919);
+
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  assert_fd_content(
+    fd,
+    visible_bytes(payload),
+    "setbuffer(null) must make vfprintf output observable without explicit fflush",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setlinebuf_flushes_newline_vfprintf_output() {
+  let _guard = test_lock();
+  let payload = b"i023-setlinebuf-newline\n\0";
+  let mut empty_ap = SysVVaList {
+    gp_offset: 48,
+    fp_offset: 0,
+    overflow_arg_area: ptr::null_mut(),
+    reg_save_area: ptr::null_mut(),
+  };
+
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for setlinebuf test",
+  );
+
+  write_errno(2323);
+
+  // SAFETY: `stream` is valid for line-buffer configuration.
+  unsafe { setlinebuf(stream) };
+
+  assert_eq!(
+    read_errno(),
+    2323,
+    "successful setlinebuf must preserve errno"
+  );
+
+  write_errno(2424);
+
+  // SAFETY: stream, format string, and `va_list` pointer are valid.
+  let written = unsafe {
+    vfprintf(
+      stream,
+      payload.as_ptr().cast(),
+      core::ptr::addr_of_mut!(empty_ap).cast(),
+    )
+  };
+
+  assert!(written >= 0, "line-buffered vfprintf write must succeed");
+  assert_eq!(read_errno(), 2424);
+
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  assert_fd_content(
+    fd,
+    visible_bytes(payload),
+    "setlinebuf must flush newline-terminated vfprintf output without explicit fflush",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setbuf_non_null_buffer_defers_non_newline_vfprintf_until_fflush() {
+  let _guard = test_lock();
+  let payload = b"i023-setbuf-buffered\0";
+  let mut empty_ap = SysVVaList {
+    gp_offset: 48,
+    fp_offset: 0,
+    overflow_arg_area: ptr::null_mut(),
+    reg_save_area: ptr::null_mut(),
+  };
+  let mut user_buffer =
+    vec![0_u8; usize::try_from(BUFSIZ).unwrap_or_else(|_| unreachable!("BUFSIZ fits usize"))];
+
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for setbuf test",
+  );
+
+  write_errno(2525);
+
+  // SAFETY: `stream` is valid and caller-owned buffer lives through the test.
+  unsafe { setbuf(stream, user_buffer.as_mut_ptr().cast()) };
+
+  assert_eq!(read_errno(), 2525, "successful setbuf must preserve errno");
+
+  write_errno(2626);
+
+  // SAFETY: stream, format string, and `va_list` pointer are valid.
+  let written = unsafe {
+    vfprintf(
+      stream,
+      payload.as_ptr().cast(),
+      core::ptr::addr_of_mut!(empty_ap).cast(),
+    )
+  };
+
+  assert!(written >= 0, "fully buffered vfprintf write must succeed");
+  assert_eq!(read_errno(), 2626);
+
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  assert_fd_end_offset(
+    fd,
+    0,
+    "setbuf with a user buffer must keep non-newline output buffered before fflush",
+  );
+
+  write_errno(2727);
+
+  // SAFETY: stream pointer came from `tmpfile` and remains valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0, "fflush must flush setbuf-buffered output");
+  assert_eq!(read_errno(), 2727);
+  assert_fd_content(
+    fd,
+    visible_bytes(payload),
+    "fflush must publish bytes buffered through setbuf",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
 }
 
 #[test]
@@ -302,14 +593,9 @@ fn setvbuf_line_buffered_mode_flushes_newline_vfprintf_output() {
   let fd = unsafe { fileno(stream) };
 
   assert!(fd >= 0, "stream must expose file descriptor");
-  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
-  let end_offset = unsafe { lseek(fd, 0, SEEK_END) };
-  let payload_len = payload.len().saturating_sub(1);
-  let expected_end = c_long::try_from(payload_len)
-    .unwrap_or_else(|_| unreachable!("payload length must fit c_long"));
-
-  assert_eq!(
-    end_offset, expected_end,
+  assert_fd_content(
+    fd,
+    visible_bytes(payload),
     "line-buffered mode with newline must flush vfprintf output without explicit fflush",
   );
 
@@ -331,20 +617,38 @@ fn setvbuf_line_buffered_mode_flushes_percent_s_newline_payload() {
   let _guard = test_lock();
   let format = b"%s\0";
   let payload = b"i023-iolbf-percent-s-newline\n\0";
-  // SAFETY: host libc provides a valid stream or null on allocation failure.
-  let stream = unsafe { tmpfile() };
+  let mut stream = ptr::null_mut::<FILE>();
+  let mut setvbuf_status = EOF_STATUS;
+  let mut retry_count = 0_usize;
+  let max_retry_count = 64_usize;
+  let mut skipped_streams = Vec::new();
 
-  assert!(
-    !stream.is_null(),
-    "tmpfile stream must be available for I023 line-buffered percent-s test"
+  while retry_count < max_retry_count {
+    // SAFETY: host libc provides a valid stream or null on allocation failure.
+    stream = unsafe { tmpfile() };
+    assert!(
+      !stream.is_null(),
+      "tmpfile stream must be available for I023 line-buffered percent-s test",
+    );
+
+    write_errno(31);
+
+    // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+    setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+    if setvbuf_status == 0 {
+      break;
+    }
+
+    skipped_streams.push(stream);
+
+    retry_count = retry_count.saturating_add(1);
+  }
+
+  assert_eq!(
+    setvbuf_status, 0,
+    "setvbuf must succeed for a fresh tmpfile stream after retrying pointer reuse-prone host streams"
   );
-
-  write_errno(31);
-
-  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
-  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
-
-  assert_eq!(setvbuf_status, 0);
   assert_eq!(read_errno(), 31);
 
   write_errno(37);
@@ -381,6 +685,13 @@ fn setvbuf_line_buffered_mode_flushes_percent_s_newline_payload() {
   let close_status = unsafe { fclose(stream) };
 
   assert_eq!(close_status, 0);
+
+  for skipped_stream in skipped_streams {
+    // SAFETY: each stream came from `tmpfile` and remained open for this test.
+    let skipped_close_status = unsafe { fclose(skipped_stream) };
+
+    assert_eq!(skipped_close_status, 0);
+  }
 }
 
 #[test]
@@ -1055,6 +1366,79 @@ fn setvbuf_line_buffered_mode_defers_percent_s_without_newline_after_percent_e_u
     end_offset_after_flush,
     c_long::from(written),
     "fflush must make deferred mixed %e/%s output visible",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_defers_percent_s_without_newline_after_percent_upper_e_until_fflush()
+{
+  let _guard = test_lock();
+  let format = b"%E%s\0";
+  let suffix = b"tail\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I023 mixed %E/%s defer test"
+  );
+
+  write_errno(71);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 71);
+
+  write_errno(73);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%E%s", double, char*)`.
+  let written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      1.25_f64,
+      suffix.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert!(
+    written > 0,
+    "line-buffered mixed %E/%s output without newline must produce bytes",
+  );
+  assert_eq!(read_errno(), 73);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_before_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_before_flush, 0,
+    "line-buffered mode must defer when downstream %s emits no newline after %E",
+  );
+
+  write_errno(79);
+
+  // SAFETY: stream pointer came from `tmpfile` and is valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 79);
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_after_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_after_flush,
+    c_long::from(written),
+    "fflush must make deferred mixed %E/%s output visible",
   );
 
   // SAFETY: stream came from `tmpfile`.
@@ -1993,20 +2377,38 @@ fn setvbuf_line_buffered_mode_defers_dynamic_precision_percent_s_newline_outside
   let _guard = test_lock();
   let format = b"%.*s\0";
   let payload = b"ab\ncd\0";
-  // SAFETY: host libc provides a valid stream or null on allocation failure.
-  let stream = unsafe { tmpfile() };
+  let mut stream = ptr::null_mut::<FILE>();
+  let mut setvbuf_status = EOF_STATUS;
+  let mut retry_count = 0_usize;
+  let max_retry_count = 64_usize;
+  let mut skipped_streams = Vec::new();
 
-  assert!(
-    !stream.is_null(),
-    "tmpfile stream must be available for I023 line-buffered dynamic precision test"
+  while retry_count < max_retry_count {
+    // SAFETY: host libc provides a valid stream or null on allocation failure.
+    stream = unsafe { tmpfile() };
+    assert!(
+      !stream.is_null(),
+      "tmpfile stream must be available for I023 line-buffered dynamic precision test",
+    );
+
+    write_errno(55);
+
+    // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+    setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+    if setvbuf_status == 0 {
+      break;
+    }
+
+    skipped_streams.push(stream);
+
+    retry_count = retry_count.saturating_add(1);
+  }
+
+  assert_eq!(
+    setvbuf_status, 0,
+    "setvbuf must succeed for a fresh tmpfile stream after retrying pointer reuse-prone host streams"
   );
-
-  write_errno(55);
-
-  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
-  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
-
-  assert_eq!(setvbuf_status, 0);
   assert_eq!(read_errno(), 55);
 
   write_errno(59);
@@ -2058,6 +2460,13 @@ fn setvbuf_line_buffered_mode_defers_dynamic_precision_percent_s_newline_outside
   let close_status = unsafe { fclose(stream) };
 
   assert_eq!(close_status, 0);
+
+  for skipped_stream in skipped_streams {
+    // SAFETY: each stream came from `tmpfile` and remained open for this test.
+    let skipped_close_status = unsafe { fclose(skipped_stream) };
+
+    assert_eq!(skipped_close_status, 0);
+  }
 }
 
 #[test]
@@ -2639,6 +3048,70 @@ fn setvbuf_line_buffered_mode_defers_dynamic_width_and_precision_percent_s_witho
 }
 
 #[test]
+fn setvbuf_line_buffered_mode_defers_non_newline_percent_upper_f_until_fflush() {
+  let _guard = test_lock();
+  let format = b"%F\0";
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let stream = unsafe { tmpfile() };
+
+  assert!(
+    !stream.is_null(),
+    "tmpfile stream must be available for I023 line-buffered %F defer test"
+  );
+
+  write_errno(29);
+
+  // SAFETY: stream pointer is valid and line-buffered mode accepts null buffer with non-zero size.
+  let setvbuf_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(64)) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 29);
+
+  write_errno(31);
+
+  // SAFETY: stream and variadic argument satisfy `fprintf("%F", double)` contract.
+  let written = unsafe { fprintf(stream, format.as_ptr().cast(), 2.5_f64) };
+
+  assert!(
+    written > 0,
+    "line-buffered `%F` output without newline must produce bytes"
+  );
+  assert_eq!(read_errno(), 31);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_before_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_before_flush, 0,
+    "line-buffered mode must defer non-newline %F output visibility until fflush",
+  );
+
+  write_errno(37);
+
+  // SAFETY: stream pointer came from `tmpfile` and is valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 37);
+  // SAFETY: valid descriptor and `SEEK_END` are passed to host `lseek`.
+  let end_offset_after_flush = unsafe { lseek(fd, 0, SEEK_END) };
+
+  assert_eq!(
+    end_offset_after_flush,
+    c_long::from(written),
+    "fflush must make deferred line-buffered %F output visible",
+  );
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
 fn setvbuf_line_buffered_mode_defers_non_newline_percent_f_until_fflush() {
   let _guard = test_lock();
   let format = b"%f\0";
@@ -2881,6 +3354,7 @@ fn setvbuf_line_buffered_mode_flushes_unsupported_directive_with_escaped_percent
 
 #[test]
 fn setvbuf_accepts_buffered_modes_with_non_zero_size() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
   let mut user_buffer = [0_u8; 64];
@@ -2899,6 +3373,7 @@ fn setvbuf_accepts_buffered_modes_with_non_zero_size() {
 
 #[test]
 fn setvbuf_accepts_buffered_modes_with_null_buffer_and_non_zero_size() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
 
@@ -2916,6 +3391,7 @@ fn setvbuf_accepts_buffered_modes_with_null_buffer_and_non_zero_size() {
 
 #[test]
 fn setvbuf_does_not_modify_user_buffer() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
   let mut user_buffer = [0xA5_u8; 16];
@@ -2939,6 +3415,7 @@ fn setvbuf_does_not_modify_user_buffer() {
 
 #[test]
 fn setvbuf_rejects_reconfiguration_after_stream_was_used() {
+  let _guard = test_lock();
   let mut marker = 0_u8;
   let stream = as_file_ptr(&mut marker);
   let mut first_buffer = [0_u8; 8];
@@ -3449,7 +3926,7 @@ fn setvbuf_rejects_stderr_reconfiguration_after_failed_fflush_null() {
 #[test]
 fn setvbuf_allows_synthetic_untracked_stream_after_failed_non_null_fflush() {
   let _guard = test_lock();
-  let payload = b"i023-setvbuf-non-null-failure-synthetic-untracked\n\0";
+  let payload = b"%m\0";
   let mut user_buffer = [0_u8; 16];
   let stream = synthetic_untracked_stream();
   let mut empty_ap = SysVVaList {
@@ -3516,7 +3993,7 @@ fn setvbuf_allows_synthetic_untracked_stream_after_failed_non_null_fflush() {
 #[test]
 fn setvbuf_allows_synthetic_untracked_buffered_stream_after_failed_non_null_fflush() {
   let _guard = test_lock();
-  let payload = b"i022-setvbuf-non-null-failure-synthetic-untracked-buffered\n\0";
+  let payload = b"%m\0";
   let stream = synthetic_untracked_stream();
   let mut empty_ap = SysVVaList {
     gp_offset: 48,
@@ -3578,7 +4055,7 @@ fn setvbuf_allows_synthetic_untracked_buffered_stream_after_failed_non_null_fflu
 #[test]
 fn setvbuf_allows_synthetic_untracked_line_buffered_stream_after_failed_non_null_fflush() {
   let _guard = test_lock();
-  let payload = b"i022-setvbuf-non-null-failure-synthetic-untracked-line-buffered\n\0";
+  let payload = b"%m\0";
   let mut user_buffer = [0_u8; 32];
   let stream = synthetic_untracked_stream();
   let mut empty_ap = SysVVaList {
@@ -3648,7 +4125,7 @@ fn setvbuf_allows_synthetic_untracked_line_buffered_stream_after_failed_non_null
 #[test]
 fn setvbuf_allows_synthetic_untracked_line_buffered_null_buffer_after_failed_non_null_fflush() {
   let _guard = test_lock();
-  let payload = b"i022-setvbuf-non-null-failure-synthetic-untracked-line-buffered-null\n\0";
+  let payload = b"%m\0";
   let stream = synthetic_untracked_stream();
   let mut empty_ap = SysVVaList {
     gp_offset: 48,
@@ -3710,7 +4187,7 @@ fn setvbuf_allows_synthetic_untracked_line_buffered_null_buffer_after_failed_non
 #[test]
 fn setvbuf_allows_synthetic_reconfiguration_after_failed_non_null_fflush_before_io() {
   let _guard = test_lock();
-  let payload = b"i022-setvbuf-non-null-failure-synthetic-reconfigure\n\0";
+  let payload = b"%m\0";
   let mut first_buffer = [0_u8; 8];
   let mut second_buffer = [0_u8; 16];
   let stream = synthetic_untracked_stream();
@@ -3796,7 +4273,7 @@ fn setvbuf_allows_synthetic_reconfiguration_after_failed_non_null_fflush_before_
 #[test]
 fn setvbuf_rejects_synthetic_stream_reconfiguration_after_non_null_fflush_post_failure_isolation() {
   let _guard = test_lock();
-  let payload = b"i022-setvbuf-non-null-failure-then-synthetic-flush\n\0";
+  let payload = b"%m\0";
   let stream = synthetic_untracked_stream();
   let mut first_buffer = [0_u8; 8];
   let mut second_buffer = [0_u8; 16];
@@ -4435,7 +4912,7 @@ fn setvbuf_rejects_synthetic_reconfiguration_after_second_failed_fflush_null() {
 #[test]
 fn setvbuf_rejects_synthetic_reconfiguration_after_failed_non_null_then_failed_null_fflush() {
   let _guard = test_lock();
-  let payload_non_null = b"i022-setvbuf-non-null-then-null-failure-a\n\0";
+  let payload_non_null = b"%m\0";
   let payload_null = b"i022-setvbuf-non-null-then-null-failure-b\n\0";
   let mut first_buffer = [0_u8; 8];
   let mut second_buffer = [0_u8; 16];
@@ -4621,344 +5098,91 @@ fn setvbuf_rejects_stdin_reconfiguration_after_failed_fflush_null() {
 }
 
 #[test]
-fn setvbuf_rejects_reconfiguration_after_non_null_fflush_attempt() {
+fn setvbuf_fully_buffered_mode_second_write_with_explicit_buffer_stays_deferred_until_fflush_stream()
+ {
   let _guard = test_lock();
-  let payload = b"i022\n\0";
-  let max_untracked_stream_retries: usize = 64;
-  let mut first_buffer = [0_u8; 8];
-  let mut second_buffer = [0_u8; 16];
-  let mut skipped_streams = Vec::new();
-  let mut empty_ap = SysVVaList {
-    gp_offset: 48,
-    fp_offset: 0,
-    overflow_arg_area: ptr::null_mut(),
-    reg_save_area: ptr::null_mut(),
-  };
-  let stream = loop {
-    // SAFETY: host libc provides a valid stream or null on allocation failure.
-    let candidate = unsafe { tmpfile() };
+  let format = b"%s\0";
+  let first_payload = b"i023-iofbf-explicit-first\0";
+  let second_payload = b"-second-write\0";
+  let mut user_buffer = [0_u8; 64];
+  let (stream, skipped_streams) = acquire_configured_tmpfile(
+    user_buffer.as_mut_ptr().cast(),
+    _IOFBF,
+    user_buffer.len(),
+    53,
+    "tmpfile stream for fully buffered explicit two-write test must succeed",
+  );
 
-    assert!(
-      !candidate.is_null(),
-      "tmpfile stream for non-null failure case must succeed"
-    );
+  write_errno(59);
 
-    write_errno(0);
-
-    // SAFETY: stream and buffer pointers are valid for this call.
-    let first_status = unsafe {
-      setvbuf(
-        candidate,
-        first_buffer.as_mut_ptr().cast::<c_char>(),
-        _IOFBF,
-        as_size_t(first_buffer.len()),
-      )
-    };
-
-    if first_status == 0 {
-      break candidate;
-    }
-
-    assert_eq!(first_status, EOF_STATUS);
-    assert_eq!(read_errno(), EINVAL);
-    skipped_streams.push(candidate);
-    assert!(
-      skipped_streams.len() < max_untracked_stream_retries,
-      "failed to obtain an untracked tmpfile stream after repeated attempts",
-    );
-  };
-
-  write_errno(53);
-
-  // SAFETY: stream, format string, and `va_list` pointer are valid.
-  let write_status = unsafe {
-    vfprintf(
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let first_written = unsafe {
+    fprintf(
       stream,
-      payload.as_ptr().cast(),
-      core::ptr::addr_of_mut!(empty_ap).cast(),
+      format.as_ptr().cast(),
+      first_payload.as_ptr().cast::<c_char>(),
     )
   };
 
-  assert!(write_status >= 0, "host-backed write must succeed");
-  assert_eq!(read_errno(), 53);
+  assert_eq!(first_written, as_c_int(visible_bytes(first_payload).len()));
+  assert_eq!(read_errno(), 59);
   // SAFETY: `fileno` expects a valid host FILE pointer.
   let fd = unsafe { fileno(stream) };
 
   assert!(fd >= 0, "stream must expose file descriptor");
-  // SAFETY: explicit fd close is used to induce host fflush failure.
-  let close_status = unsafe { close(fd) };
-
-  assert_eq!(close_status, 0, "closing stream fd must succeed");
-
-  write_errno(0);
-
-  // SAFETY: host stream pointer is valid for this call.
-  let flush_status = unsafe { fflush(stream) };
-
-  assert!(
-    flush_status == EOF_STATUS || flush_status == 0,
-    "closed-fd host fflush may fail (EOF) or report success (0) depending on host libc behavior",
+  assert_fd_end_offset(
+    fd,
+    0,
+    "fully buffered explicit mode must keep the first write invisible before fflush(stream)",
   );
 
-  if flush_status == EOF_STATUS {
-    assert_ne!(read_errno(), 0, "failed fflush(stream) must set errno");
-  } else {
-    assert_eq!(
-      read_errno(),
-      0,
-      "successful fflush(stream) must preserve errno"
-    );
-  }
+  write_errno(61);
 
-  write_errno(0);
-
-  // SAFETY: stream and buffer pointers are valid for this call.
-  let second_status = unsafe {
-    setvbuf(
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let second_written = unsafe {
+    fprintf(
       stream,
-      second_buffer.as_mut_ptr().cast::<c_char>(),
-      _IOLBF,
-      as_size_t(second_buffer.len()),
+      format.as_ptr().cast(),
+      second_payload.as_ptr().cast::<c_char>(),
     )
   };
 
-  assert_eq!(second_status, EOF_STATUS);
-  assert_eq!(read_errno(), EINVAL);
-
-  for skipped_stream in skipped_streams {
-    // SAFETY: each skipped stream came from `tmpfile` and was not fd-closed.
-    let close_status = unsafe { fclose(skipped_stream) };
-
-    assert_eq!(
-      close_status, 0,
-      "closing skipped tmpfile stream must succeed"
-    );
-  }
-
-  // SAFETY: even after injected fd close, fclose is still required to release FILE state.
-  let _ = unsafe { fclose(stream) };
-}
-
-#[test]
-fn setvbuf_rejects_unbuffered_reconfiguration_after_non_null_fflush_attempt() {
-  let _guard = test_lock();
-  let payload = b"i022-unbuffered\n\0";
-  let max_untracked_stream_retries: usize = 64;
-  let mut first_buffer = [0_u8; 8];
-  let mut skipped_streams = Vec::new();
-  let mut empty_ap = SysVVaList {
-    gp_offset: 48,
-    fp_offset: 0,
-    overflow_arg_area: ptr::null_mut(),
-    reg_save_area: ptr::null_mut(),
-  };
-  let stream = loop {
-    // SAFETY: host libc provides a valid stream or null on allocation failure.
-    let candidate = unsafe { tmpfile() };
-
-    assert!(
-      !candidate.is_null(),
-      "tmpfile stream for non-null failure case must succeed"
-    );
-
-    write_errno(0);
-
-    // SAFETY: stream and buffer pointers are valid for this call.
-    let first_status = unsafe {
-      setvbuf(
-        candidate,
-        first_buffer.as_mut_ptr().cast::<c_char>(),
-        _IOFBF,
-        as_size_t(first_buffer.len()),
-      )
-    };
-
-    if first_status == 0 {
-      break candidate;
-    }
-
-    assert_eq!(first_status, EOF_STATUS);
-    assert_eq!(read_errno(), EINVAL);
-    skipped_streams.push(candidate);
-    assert!(
-      skipped_streams.len() < max_untracked_stream_retries,
-      "failed to obtain an untracked tmpfile stream after repeated attempts",
-    );
-  };
-
-  write_errno(17);
-
-  // SAFETY: stream, format string, and `va_list` pointer are valid.
-  let write_status = unsafe {
-    vfprintf(
-      stream,
-      payload.as_ptr().cast(),
-      core::ptr::addr_of_mut!(empty_ap).cast(),
-    )
-  };
-
-  assert!(write_status >= 0, "host-backed write must succeed");
-  assert_eq!(read_errno(), 17);
-  // SAFETY: `fileno` expects a valid host FILE pointer.
-  let fd = unsafe { fileno(stream) };
-
-  assert!(fd >= 0, "stream must expose file descriptor");
-  // SAFETY: explicit fd close is used to induce host fflush failure.
-  let close_status = unsafe { close(fd) };
-
-  assert_eq!(close_status, 0, "closing stream fd must succeed");
-
-  write_errno(0);
-
-  // SAFETY: host stream pointer is valid for this call.
-  let flush_status = unsafe { fflush(stream) };
-
-  assert!(
-    flush_status == EOF_STATUS || flush_status == 0,
-    "closed-fd host fflush may fail (EOF) or report success (0) depending on host libc behavior",
+  assert_eq!(
+    second_written,
+    as_c_int(visible_bytes(second_payload).len())
+  );
+  assert_eq!(read_errno(), 61);
+  assert_fd_end_offset(
+    fd,
+    0,
+    "fully buffered explicit mode must keep the second write invisible before fflush(stream)",
   );
 
-  if flush_status == EOF_STATUS {
-    assert_ne!(read_errno(), 0, "failed fflush(stream) must set errno");
-  } else {
-    assert_eq!(
-      read_errno(),
-      0,
-      "successful fflush(stream) must preserve errno"
-    );
-  }
+  write_errno(67);
 
-  write_errno(0);
-
-  // SAFETY: stream pointer is valid and unbuffered mode does not require user buffer.
-  let second_status = unsafe { setvbuf(stream, ptr::null_mut(), _IONBF, 0) };
-
-  assert_eq!(second_status, EOF_STATUS);
-  assert_eq!(read_errno(), EINVAL);
-
-  for skipped_stream in skipped_streams {
-    // SAFETY: each skipped stream came from `tmpfile` and was not fd-closed.
-    let close_status = unsafe { fclose(skipped_stream) };
-
-    assert_eq!(
-      close_status, 0,
-      "closing skipped tmpfile stream must succeed"
-    );
-  }
-
-  // SAFETY: even after injected fd close, fclose is still required to release FILE state.
-  let _ = unsafe { fclose(stream) };
-}
-
-#[test]
-fn setvbuf_rejects_null_buffer_reconfiguration_after_non_null_fflush_attempt() {
-  let _guard = test_lock();
-  let payload = b"i022-null-buffer\n\0";
-  let max_untracked_stream_retries: usize = 64;
-  let mut first_buffer = [0_u8; 8];
-  let mut skipped_streams = Vec::new();
-  let mut empty_ap = SysVVaList {
-    gp_offset: 48,
-    fp_offset: 0,
-    overflow_arg_area: ptr::null_mut(),
-    reg_save_area: ptr::null_mut(),
-  };
-  let stream = loop {
-    // SAFETY: host libc provides a valid stream or null on allocation failure.
-    let candidate = unsafe { tmpfile() };
-
-    assert!(
-      !candidate.is_null(),
-      "tmpfile stream for non-null failure case must succeed"
-    );
-
-    write_errno(0);
-
-    // SAFETY: stream and buffer pointers are valid for this call.
-    let first_status = unsafe {
-      setvbuf(
-        candidate,
-        first_buffer.as_mut_ptr().cast::<c_char>(),
-        _IOFBF,
-        as_size_t(first_buffer.len()),
-      )
-    };
-
-    if first_status == 0 {
-      break candidate;
-    }
-
-    assert_eq!(first_status, EOF_STATUS);
-    assert_eq!(read_errno(), EINVAL);
-    skipped_streams.push(candidate);
-    assert!(
-      skipped_streams.len() < max_untracked_stream_retries,
-      "failed to obtain an untracked tmpfile stream after repeated attempts",
-    );
-  };
-
-  write_errno(23);
-
-  // SAFETY: stream, format string, and `va_list` pointer are valid.
-  let write_status = unsafe {
-    vfprintf(
-      stream,
-      payload.as_ptr().cast(),
-      core::ptr::addr_of_mut!(empty_ap).cast(),
-    )
-  };
-
-  assert!(write_status >= 0, "host-backed write must succeed");
-  assert_eq!(read_errno(), 23);
-  // SAFETY: `fileno` expects a valid host FILE pointer.
-  let fd = unsafe { fileno(stream) };
-
-  assert!(fd >= 0, "stream must expose file descriptor");
-  // SAFETY: explicit fd close is used to induce host fflush failure.
-  let close_status = unsafe { close(fd) };
-
-  assert_eq!(close_status, 0, "closing stream fd must succeed");
-
-  write_errno(0);
-
-  // SAFETY: host stream pointer is valid for this call.
+  // SAFETY: stream pointer came from `tmpfile` and remains valid for host flush.
   let flush_status = unsafe { fflush(stream) };
 
-  assert!(
-    flush_status == EOF_STATUS || flush_status == 0,
-    "closed-fd host fflush may fail (EOF) or report success (0) depending on host libc behavior",
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 67);
+
+  let mut expected = Vec::new();
+
+  expected.extend_from_slice(visible_bytes(first_payload));
+  expected.extend_from_slice(visible_bytes(second_payload));
+
+  assert_fd_content(
+    fd,
+    &expected,
+    "fflush(stream) must flush both fully buffered explicit writes in order",
   );
 
-  if flush_status == EOF_STATUS {
-    assert_ne!(read_errno(), 0, "failed fflush(stream) must set errno");
-  } else {
-    assert_eq!(
-      read_errno(),
-      0,
-      "successful fflush(stream) must preserve errno"
-    );
-  }
+  close_tmpfile_streams(skipped_streams);
 
-  write_errno(97);
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
 
-  // SAFETY: stream pointer is valid and null buffer is accepted for buffered modes.
-  let second_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOFBF, as_size_t(32)) };
-
-  assert_eq!(second_status, EOF_STATUS);
-  assert_eq!(read_errno(), EINVAL);
-
-  for skipped_stream in skipped_streams {
-    // SAFETY: each skipped stream came from `tmpfile` and was not fd-closed.
-    let close_status = unsafe { fclose(skipped_stream) };
-
-    assert_eq!(
-      close_status, 0,
-      "closing skipped tmpfile stream must succeed"
-    );
-  }
-
-  // SAFETY: even after injected fd close, fclose is still required to release FILE state.
-  let _ = unsafe { fclose(stream) };
+  assert_eq!(close_status, 0);
 }
 
 #[test]
@@ -5163,114 +5387,428 @@ fn setvbuf_keeps_other_stream_reconfigurable_after_failed_host_vfprintf() {
 }
 
 #[test]
-fn setvbuf_rejects_null_buffer_line_reconfiguration_after_non_null_fflush_attempt() {
+fn setvbuf_line_buffered_mode_second_newline_write_with_explicit_buffer_flushes_buffered_prefix() {
   let _guard = test_lock();
-  let payload = b"i022-null-buffer-line\n\0";
-  let max_untracked_stream_retries: usize = 64;
-  let mut first_buffer = [0_u8; 8];
-  let mut skipped_streams = Vec::new();
-  let mut empty_ap = SysVVaList {
-    gp_offset: 48,
-    fp_offset: 0,
-    overflow_arg_area: ptr::null_mut(),
-    reg_save_area: ptr::null_mut(),
-  };
-  let stream = loop {
-    // SAFETY: host libc provides a valid stream or null on allocation failure.
-    let candidate = unsafe { tmpfile() };
+  let format = b"%s\0";
+  let first_payload = b"i023-iolbf-explicit-prefix\0";
+  let second_payload = b"-flushes-on-second-write\n\0";
+  let mut user_buffer = [0_u8; 64];
+  let (stream, skipped_streams) = acquire_configured_tmpfile(
+    user_buffer.as_mut_ptr().cast(),
+    _IOLBF,
+    user_buffer.len(),
+    31,
+    "tmpfile stream for explicit line-buffered newline test must succeed",
+  );
 
-    assert!(
-      !candidate.is_null(),
-      "tmpfile stream for non-null failure case must succeed"
-    );
+  write_errno(37);
 
-    write_errno(0);
-
-    // SAFETY: stream and buffer pointers are valid for this call.
-    let first_status = unsafe {
-      setvbuf(
-        candidate,
-        first_buffer.as_mut_ptr().cast::<c_char>(),
-        _IOFBF,
-        as_size_t(first_buffer.len()),
-      )
-    };
-
-    if first_status == 0 {
-      break candidate;
-    }
-
-    assert_eq!(first_status, EOF_STATUS);
-    assert_eq!(read_errno(), EINVAL);
-    skipped_streams.push(candidate);
-    assert!(
-      skipped_streams.len() < max_untracked_stream_retries,
-      "failed to obtain an untracked tmpfile stream after repeated attempts",
-    );
-  };
-
-  write_errno(31);
-
-  // SAFETY: stream, format string, and `va_list` pointer are valid.
-  let write_status = unsafe {
-    vfprintf(
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let first_written = unsafe {
+    fprintf(
       stream,
-      payload.as_ptr().cast(),
-      core::ptr::addr_of_mut!(empty_ap).cast(),
+      format.as_ptr().cast(),
+      first_payload.as_ptr().cast::<c_char>(),
     )
   };
 
-  assert!(write_status >= 0, "host-backed write must succeed");
-  assert_eq!(read_errno(), 31);
+  assert_eq!(first_written, as_c_int(visible_bytes(first_payload).len()));
+  assert_eq!(read_errno(), 37);
   // SAFETY: `fileno` expects a valid host FILE pointer.
   let fd = unsafe { fileno(stream) };
 
   assert!(fd >= 0, "stream must expose file descriptor");
-  // SAFETY: explicit fd close is used to induce host fflush failure.
-  let close_status = unsafe { close(fd) };
-
-  assert_eq!(close_status, 0, "closing stream fd must succeed");
-
-  write_errno(0);
-
-  // SAFETY: host stream pointer is valid for this call.
-  let flush_status = unsafe { fflush(stream) };
-
-  assert!(
-    flush_status == EOF_STATUS || flush_status == 0,
-    "closed-fd host fflush may fail (EOF) or report success (0) depending on host libc behavior",
+  assert_fd_end_offset(
+    fd,
+    0,
+    "line-buffered explicit mode must keep the first non-newline write buffered",
   );
 
-  if flush_status == EOF_STATUS {
-    assert_ne!(read_errno(), 0, "failed fflush(stream) must set errno");
-  } else {
-    assert_eq!(
-      read_errno(),
-      0,
-      "successful fflush(stream) must preserve errno"
-    );
-  }
+  write_errno(41);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let second_written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      second_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(
+    second_written,
+    as_c_int(visible_bytes(second_payload).len())
+  );
+  assert_eq!(read_errno(), 41);
+
+  let mut expected = Vec::new();
+
+  expected.extend_from_slice(visible_bytes(first_payload));
+  expected.extend_from_slice(visible_bytes(second_payload));
+
+  assert_fd_content(
+    fd,
+    &expected,
+    "line-buffered explicit mode must flush the buffered prefix when the second write emits a newline",
+  );
+
+  close_tmpfile_streams(skipped_streams);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_second_non_newline_write_with_explicit_buffer_stays_deferred_until_fflush_stream()
+ {
+  let _guard = test_lock();
+  let format = b"%s\0";
+  let first_payload = b"i023-iolbf-explicit-first\0";
+  let second_payload = b"-second-without-newline\0";
+  let mut user_buffer = [0_u8; 64];
+  let (stream, skipped_streams) = acquire_configured_tmpfile(
+    user_buffer.as_mut_ptr().cast(),
+    _IOLBF,
+    user_buffer.len(),
+    73,
+    "tmpfile stream for explicit line-buffered deferred-flush test must succeed",
+  );
+
+  write_errno(79);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let first_written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      first_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(first_written, as_c_int(visible_bytes(first_payload).len()));
+  assert_eq!(read_errno(), 79);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  assert_fd_end_offset(
+    fd,
+    0,
+    "line-buffered explicit mode must keep the first non-newline write invisible before fflush(stream)",
+  );
+
+  write_errno(83);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let second_written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      second_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(
+    second_written,
+    as_c_int(visible_bytes(second_payload).len())
+  );
+  assert_eq!(read_errno(), 83);
+  assert_fd_end_offset(
+    fd,
+    0,
+    "line-buffered explicit mode must keep a second non-newline write buffered before fflush(stream)",
+  );
 
   write_errno(89);
 
-  // SAFETY: stream pointer is valid and null buffer is accepted for buffered modes.
-  let second_status = unsafe { setvbuf(stream, ptr::null_mut(), _IOLBF, as_size_t(32)) };
+  // SAFETY: stream pointer came from `tmpfile` and remains valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
 
-  assert_eq!(second_status, EOF_STATUS);
-  assert_eq!(read_errno(), EINVAL);
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 89);
 
-  for skipped_stream in skipped_streams {
-    // SAFETY: each skipped stream came from `tmpfile` and was not fd-closed.
-    let close_status = unsafe { fclose(skipped_stream) };
+  let mut expected = Vec::new();
 
-    assert_eq!(
-      close_status, 0,
-      "closing skipped tmpfile stream must succeed"
-    );
-  }
+  expected.extend_from_slice(visible_bytes(first_payload));
+  expected.extend_from_slice(visible_bytes(second_payload));
 
-  // SAFETY: even after injected fd close, fclose is still required to release FILE state.
-  let _ = unsafe { fclose(stream) };
+  assert_fd_content(
+    fd,
+    &expected,
+    "fflush(stream) must flush both deferred line-buffered explicit writes in order",
+  );
+
+  close_tmpfile_streams(skipped_streams);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_second_write_with_internal_newline_and_null_buffer_flushes_full_write()
+ {
+  let _guard = test_lock();
+  let format = b"%s\0";
+  let first_payload = b"i023-iolbf-null-prefix\0";
+  let second_payload = b"-newline\nsuffix\0";
+  let (stream, skipped_streams) = acquire_configured_tmpfile(
+    ptr::null_mut(),
+    _IOLBF,
+    64,
+    97,
+    "tmpfile stream for null-buffer line-buffered internal-newline test must succeed",
+  );
+
+  write_errno(101);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let first_written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      first_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(first_written, as_c_int(visible_bytes(first_payload).len()));
+  assert_eq!(read_errno(), 101);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  assert_fd_end_offset(
+    fd,
+    0,
+    "line-buffered null-buffer mode must keep the first non-newline write buffered",
+  );
+
+  write_errno(103);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let second_written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      second_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(
+    second_written,
+    as_c_int(visible_bytes(second_payload).len())
+  );
+  assert_eq!(read_errno(), 103);
+
+  let mut expected = Vec::new();
+
+  expected.extend_from_slice(visible_bytes(first_payload));
+  expected.extend_from_slice(visible_bytes(second_payload));
+
+  assert_fd_content(
+    fd,
+    &expected,
+    "line-buffered null-buffer mode must flush the buffered prefix and full second write when a later write contains an internal newline",
+  );
+
+  close_tmpfile_streams(skipped_streams);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_line_buffered_mode_second_non_newline_write_with_null_buffer_stays_deferred_until_fflush_stream()
+ {
+  let _guard = test_lock();
+  let format = b"%s\0";
+  let first_payload = b"i023-iolbf-null-first\0";
+  let second_payload = b"-second-without-newline\0";
+  let (stream, skipped_streams) = acquire_configured_tmpfile(
+    ptr::null_mut(),
+    _IOLBF,
+    64,
+    107,
+    "tmpfile stream for null-buffer line-buffered deferred-flush test must succeed",
+  );
+
+  write_errno(109);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let first_written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      first_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(first_written, as_c_int(visible_bytes(first_payload).len()));
+  assert_eq!(read_errno(), 109);
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "stream must expose file descriptor");
+  assert_fd_end_offset(
+    fd,
+    0,
+    "line-buffered null-buffer mode must keep the first non-newline write invisible before fflush(stream)",
+  );
+
+  write_errno(113);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let second_written = unsafe {
+    fprintf(
+      stream,
+      format.as_ptr().cast(),
+      second_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(
+    second_written,
+    as_c_int(visible_bytes(second_payload).len())
+  );
+  assert_eq!(read_errno(), 113);
+  assert_fd_end_offset(
+    fd,
+    0,
+    "line-buffered null-buffer mode must keep a second non-newline write buffered before fflush(stream)",
+  );
+
+  write_errno(127);
+
+  // SAFETY: stream pointer came from `tmpfile` and remains valid for host flush.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 127);
+
+  let mut expected = Vec::new();
+
+  expected.extend_from_slice(visible_bytes(first_payload));
+  expected.extend_from_slice(visible_bytes(second_payload));
+
+  assert_fd_content(
+    fd,
+    &expected,
+    "fflush(stream) must flush both deferred line-buffered null-buffer writes in order",
+  );
+
+  close_tmpfile_streams(skipped_streams);
+
+  // SAFETY: stream came from `tmpfile`.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0);
+}
+
+#[test]
+fn setvbuf_fully_buffered_mode_fflush_null_flushes_all_pending_explicit_writes() {
+  let _guard = test_lock();
+  let format = b"%s\0";
+  let first_payload = b"i023-fflush-null-stream-one\0";
+  let second_payload = b"i023-fflush-null-stream-two\0";
+  let mut first_buffer = [0_u8; 64];
+  let mut second_buffer = [0_u8; 64];
+  let (first_stream, first_skipped_streams) = acquire_configured_tmpfile(
+    first_buffer.as_mut_ptr().cast(),
+    _IOFBF,
+    first_buffer.len(),
+    97,
+    "first tmpfile stream for fflush(NULL) explicit-buffer test must succeed",
+  );
+  let (second_stream, second_skipped_streams) = acquire_configured_tmpfile(
+    second_buffer.as_mut_ptr().cast(),
+    _IOFBF,
+    second_buffer.len(),
+    101,
+    "second tmpfile stream for fflush(NULL) explicit-buffer test must succeed",
+  );
+
+  write_errno(103);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let first_written = unsafe {
+    fprintf(
+      first_stream,
+      format.as_ptr().cast(),
+      first_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(first_written, as_c_int(visible_bytes(first_payload).len()));
+  assert_eq!(read_errno(), 103);
+
+  write_errno(107);
+
+  // SAFETY: stream/format are valid and variadic args satisfy `fprintf("%s", char*)`.
+  let second_written = unsafe {
+    fprintf(
+      second_stream,
+      format.as_ptr().cast(),
+      second_payload.as_ptr().cast::<c_char>(),
+    )
+  };
+
+  assert_eq!(
+    second_written,
+    as_c_int(visible_bytes(second_payload).len())
+  );
+  assert_eq!(read_errno(), 107);
+
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let first_fd = unsafe { fileno(first_stream) };
+  // SAFETY: `fileno` expects a valid host FILE pointer.
+  let second_fd = unsafe { fileno(second_stream) };
+
+  assert!(first_fd >= 0, "first stream must expose file descriptor");
+  assert!(second_fd >= 0, "second stream must expose file descriptor");
+  assert_fd_end_offset(
+    first_fd,
+    0,
+    "fflush(NULL) test must keep the first fully buffered explicit write invisible beforehand",
+  );
+  assert_fd_end_offset(
+    second_fd,
+    0,
+    "fflush(NULL) test must keep the second fully buffered explicit write invisible beforehand",
+  );
+
+  write_errno(109);
+
+  // SAFETY: C contract allows `fflush(NULL)` to flush all process streams.
+  let flush_status = unsafe { fflush(ptr::null_mut()) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 109);
+  assert_fd_content(
+    first_fd,
+    visible_bytes(first_payload),
+    "fflush(NULL) must flush pending bytes for the first explicit-buffered stream",
+  );
+  assert_fd_content(
+    second_fd,
+    visible_bytes(second_payload),
+    "fflush(NULL) must flush pending bytes for the second explicit-buffered stream",
+  );
+
+  close_tmpfile_streams(first_skipped_streams);
+  close_tmpfile_streams(second_skipped_streams);
+
+  // SAFETY: streams came from `tmpfile`.
+  let first_close_status = unsafe { fclose(first_stream) };
+  // SAFETY: streams came from `tmpfile`.
+  let second_close_status = unsafe { fclose(second_stream) };
+
+  assert_eq!(first_close_status, 0);
+  assert_eq!(second_close_status, 0);
 }
 
 #[test]

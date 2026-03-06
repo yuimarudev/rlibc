@@ -3,7 +3,7 @@ use core::ptr::null_mut;
 use rlibc::abi::errno::EINVAL;
 use rlibc::abi::types::{c_int, c_long, ssize_t};
 use rlibc::errno::__errno_location;
-use rlibc::stdio::{_IONBF, EOF, FILE, fflush, setvbuf, vfprintf};
+use rlibc::stdio::{_IOFBF, _IOLBF, _IONBF, EOF, FILE, fflush, setvbuf, vfprintf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const SEEK_SET: c_int = 0;
@@ -59,6 +59,70 @@ fn test_lock() -> MutexGuard<'static, ()> {
   }
 }
 
+fn fresh_non_stdio_stream() -> *mut FILE {
+  // Leak one byte so each test gets a unique opaque FILE pointer and does not
+  // accidentally reuse a stale registry key from another test.
+  Box::into_raw(Box::new(0_u8)).cast::<FILE>()
+}
+
+fn fresh_reconfigurable_tmpfile(
+  user_buffer: &mut [u8],
+  errno_value: c_int,
+  context: &str,
+) -> (*mut FILE, Vec<*mut FILE>) {
+  let mut skipped_streams = Vec::new();
+
+  for _ in 0..64 {
+    // SAFETY: host libc provides a valid stream or null on allocation failure.
+    let stream = unsafe { tmpfile() };
+
+    assert!(!stream.is_null(), "{context}");
+
+    write_errno(errno_value);
+
+    // SAFETY: stream and buffer pointers are valid for this call.
+    let setvbuf_status = unsafe {
+      setvbuf(
+        stream,
+        user_buffer.as_mut_ptr().cast(),
+        _IOFBF,
+        user_buffer
+          .len()
+          .try_into()
+          .unwrap_or_else(|_| unreachable!("usize length must fit size_t")),
+      )
+    };
+
+    if setvbuf_status == 0 {
+      assert_eq!(read_errno(), errno_value);
+
+      return (stream, skipped_streams);
+    }
+
+    assert_eq!(setvbuf_status, EOF);
+    assert_eq!(
+      read_errno(),
+      EINVAL,
+      "{context}: recycled host stream keys must surface as late setvbuf rejection",
+    );
+    skipped_streams.push(stream);
+  }
+
+  unreachable!("{context}");
+}
+
+fn close_tmpfile_streams(streams: Vec<*mut FILE>) {
+  for stream in streams {
+    // SAFETY: every skipped stream came from `tmpfile` and remains open here.
+    let close_status = unsafe { fclose(stream) };
+
+    assert_eq!(
+      close_status, 0,
+      "closing skipped tmpfile stream must succeed"
+    );
+  }
+}
+
 #[test]
 fn fflush_symbol_matches_c_abi_signature() {
   let signature = as_expected_fflush_signature(fflush);
@@ -73,7 +137,7 @@ fn eof_constant_is_negative() {
 }
 
 #[test]
-fn fflush_null_stream_returns_success_when_no_streams_are_registered() {
+fn fflush_null_stream_returns_success_for_null_stream() {
   let _guard = test_lock();
 
   write_errno(0);
@@ -85,7 +149,7 @@ fn fflush_null_stream_returns_success_when_no_streams_are_registered() {
 }
 
 #[test]
-fn fflush_null_stream_is_idempotent_without_registered_streams() {
+fn fflush_null_stream_is_idempotent_across_repeated_calls() {
   let _guard = test_lock();
 
   write_errno(0);
@@ -115,8 +179,7 @@ fn fflush_null_stream_success_path_does_not_clobber_errno() {
 #[test]
 fn fflush_unregistered_non_null_stream_is_noop_success() {
   let _guard = test_lock();
-  let mut marker = 0_u8;
-  let stream = core::ptr::from_mut(&mut marker).cast::<FILE>();
+  let stream = fresh_non_stdio_stream();
 
   write_errno(77);
 
@@ -131,8 +194,7 @@ fn fflush_unregistered_non_null_stream_is_noop_success() {
 #[test]
 fn fflush_unregistered_stream_blocks_late_setvbuf() {
   let _guard = test_lock();
-  let mut marker = 0_u8;
-  let stream = core::ptr::from_mut(&mut marker).cast::<FILE>();
+  let stream = fresh_non_stdio_stream();
   let mut user_buffer = [0_u8; 8];
 
   write_errno(55);
@@ -155,8 +217,7 @@ fn fflush_unregistered_stream_blocks_late_setvbuf() {
 #[test]
 fn fflush_registered_stream_is_idempotent_and_blocks_late_setvbuf() {
   let _guard = test_lock();
-  let mut marker = 0_u8;
-  let stream = core::ptr::from_mut(&mut marker).cast::<FILE>();
+  let stream = fresh_non_stdio_stream();
   let mut user_buffer = [0_u8; 8];
 
   write_errno(0);
@@ -184,6 +245,71 @@ fn fflush_registered_stream_is_idempotent_and_blocks_late_setvbuf() {
 
   assert_eq!(late_setvbuf, EOF);
   assert_eq!(read_errno(), EINVAL);
+}
+
+#[test]
+fn fflush_host_backed_stream_blocks_late_setvbuf_after_fresh_setvbuf_success() {
+  let _guard = test_lock();
+  let payload = b"i022-host-backed-late-setvbuf\n\0";
+  let mut initial_buffer = [0_u8; 8];
+  let mut replacement_buffer = [0_u8; 16];
+  let mut empty_ap = SysVVaList {
+    gp_offset: 48,
+    fp_offset: 0,
+    overflow_arg_area: null_mut(),
+    reg_save_area: null_mut(),
+  };
+  let (stream, skipped_streams) = fresh_reconfigurable_tmpfile(
+    &mut initial_buffer,
+    101,
+    "fresh host-backed stream must be reconfigurable before fflush",
+  );
+
+  write_errno(103);
+
+  // SAFETY: stream, format string, and `va_list` pointer are valid.
+  let write_status = unsafe {
+    vfprintf(
+      stream,
+      payload.as_ptr().cast(),
+      core::ptr::addr_of_mut!(empty_ap).cast(),
+    )
+  };
+
+  assert!(write_status >= 0, "priming host-backed stream must succeed");
+  assert_eq!(read_errno(), 103);
+
+  write_errno(107);
+
+  // SAFETY: stream pointer is valid for this call.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, 0);
+  assert_eq!(read_errno(), 107);
+
+  write_errno(0);
+
+  // SAFETY: stream and replacement buffer pointers are valid for this call.
+  let late_setvbuf = unsafe {
+    setvbuf(
+      stream,
+      replacement_buffer.as_mut_ptr().cast(),
+      _IOLBF,
+      replacement_buffer
+        .len()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("usize length must fit size_t")),
+    )
+  };
+
+  assert_eq!(late_setvbuf, EOF);
+  assert_eq!(read_errno(), EINVAL);
+
+  // SAFETY: stream came from `tmpfile` and remains open here.
+  let close_status = unsafe { fclose(stream) };
+
+  assert_eq!(close_status, 0, "closing tmpfile stream must succeed");
+  close_tmpfile_streams(skipped_streams);
 }
 
 #[test]
@@ -265,9 +391,9 @@ fn fflush_host_backed_stream_flushes_pending_output() {
 }
 
 #[test]
-fn fflush_host_backed_stream_failure_sets_errno_and_blocks_late_setvbuf() {
+fn fflush_host_backed_stream_failure_preserves_positive_errno_and_blocks_late_setvbuf() {
   let _guard = test_lock();
-  let payload = b"i022-host-backed-failure\n\0";
+  let payload = b"%m\n\0";
   let mut user_buffer = [0_u8; 16];
   let mut empty_ap = SysVVaList {
     gp_offset: 48,
@@ -308,13 +434,17 @@ fn fflush_host_backed_stream_failure_sets_errno_and_blocks_late_setvbuf() {
 
   assert_eq!(close_status, 0, "closing stream fd must succeed");
 
-  write_errno(0);
+  write_errno(97);
 
   // SAFETY: host stream pointer is valid for this call.
   let flush_status = unsafe { fflush(stream) };
 
   assert_eq!(flush_status, EOF);
-  assert_ne!(read_errno(), 0, "fflush(stream) failure must set errno");
+  assert_eq!(
+    read_errno(),
+    97,
+    "closed host stream flush must preserve caller-visible positive errno"
+  );
 
   write_errno(0);
 
@@ -329,7 +459,178 @@ fn fflush_host_backed_stream_failure_sets_errno_and_blocks_late_setvbuf() {
 }
 
 #[test]
-fn fflush_null_stream_returns_eof_when_any_host_stream_flush_fails() {
+fn fflush_host_backed_stream_failure_with_zero_errno_sets_positive_errno() {
+  let _guard = test_lock();
+  let payload = b"i022-host-backed-flush-failure\n\0";
+  let mut initial_buffer = [0_u8; 8];
+  let mut replacement_buffer = [0_u8; 16];
+  let mut empty_ap = SysVVaList {
+    gp_offset: 48,
+    fp_offset: 0,
+    overflow_arg_area: null_mut(),
+    reg_save_area: null_mut(),
+  };
+  let (stream, skipped_streams) = fresh_reconfigurable_tmpfile(
+    &mut initial_buffer,
+    109,
+    "host-backed failure test must start from a reconfigurable tmpfile",
+  );
+
+  write_errno(113);
+
+  // SAFETY: stream, format string, and `va_list` pointer are valid.
+  let write_status = unsafe {
+    vfprintf(
+      stream,
+      payload.as_ptr().cast(),
+      core::ptr::addr_of_mut!(empty_ap).cast(),
+    )
+  };
+
+  assert!(write_status >= 0, "priming host-backed stream must succeed");
+  assert_eq!(read_errno(), 113);
+
+  // SAFETY: `fileno` expects a valid host stream.
+  let fd = unsafe { fileno(stream) };
+
+  assert!(fd >= 0, "tmpfile stream must expose a file descriptor");
+
+  // SAFETY: explicit fd close is used to induce host fflush failure.
+  let close_status = unsafe { close(fd) };
+
+  assert_eq!(close_status, 0, "closing stream fd must succeed");
+
+  write_errno(0);
+
+  // SAFETY: host stream pointer is valid for this call.
+  let flush_status = unsafe { fflush(stream) };
+
+  assert_eq!(flush_status, EOF);
+
+  let propagated_errno = read_errno();
+
+  assert!(
+    propagated_errno > 0,
+    "host-backed flush failure must surface a positive errno when caller errno is zero",
+  );
+
+  write_errno(0);
+
+  // SAFETY: stream and replacement buffer pointers are valid for this call.
+  let late_setvbuf = unsafe { setvbuf(stream, replacement_buffer.as_mut_ptr().cast(), _IONBF, 0) };
+
+  assert_eq!(late_setvbuf, EOF);
+  assert_eq!(read_errno(), EINVAL);
+
+  // SAFETY: even after injected fd close, `fclose` is still required to release FILE state.
+  let _ = unsafe { fclose(stream) };
+
+  close_tmpfile_streams(skipped_streams);
+}
+
+#[test]
+fn fflush_host_backed_stream_failure_does_not_mark_other_non_stdio_stream_active() {
+  let _guard = test_lock();
+  let unaffected_stream = fresh_non_stdio_stream();
+  let payload = b"%m\n\0";
+  let mut unaffected_initial_buffer = [0_u8; 8];
+  let mut unaffected_replacement_buffer = [0_u8; 16];
+  let mut empty_ap = SysVVaList {
+    gp_offset: 48,
+    fp_offset: 0,
+    overflow_arg_area: null_mut(),
+    reg_save_area: null_mut(),
+  };
+
+  write_errno(0);
+
+  // SAFETY: stream and buffer pointers are valid for this call.
+  let unaffected_initial_status = unsafe {
+    setvbuf(
+      unaffected_stream,
+      unaffected_initial_buffer.as_mut_ptr().cast(),
+      _IOFBF,
+      unaffected_initial_buffer
+        .len()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("usize length must fit size_t")),
+    )
+  };
+
+  assert_eq!(unaffected_initial_status, 0);
+  assert_eq!(read_errno(), 0);
+
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let failing_stream = unsafe { tmpfile() };
+
+  assert!(
+    !failing_stream.is_null(),
+    "tmpfile must provide a writable host stream"
+  );
+
+  // SAFETY: `fileno` expects a valid host stream.
+  let failing_fd = unsafe { fileno(failing_stream) };
+
+  assert!(
+    failing_fd >= 0,
+    "tmpfile stream must expose a file descriptor"
+  );
+
+  write_errno(41);
+
+  // SAFETY: stream, format string, and `va_list` pointer are valid.
+  let write_status = unsafe {
+    vfprintf(
+      failing_stream,
+      payload.as_ptr().cast(),
+      core::ptr::addr_of_mut!(empty_ap).cast(),
+    )
+  };
+
+  assert!(write_status >= 0, "priming host-backed stream must succeed");
+  assert_eq!(read_errno(), 41);
+
+  // SAFETY: explicit fd close is used to induce host fflush failure.
+  let close_status = unsafe { close(failing_fd) };
+
+  assert_eq!(close_status, 0, "closing stream fd must succeed");
+
+  write_errno(67);
+
+  // SAFETY: host stream pointer is valid for this call.
+  let flush_status = unsafe { fflush(failing_stream) };
+
+  assert_eq!(flush_status, EOF);
+  assert_eq!(
+    read_errno(),
+    67,
+    "closed host stream flush must preserve caller-visible positive errno"
+  );
+
+  write_errno(83);
+
+  // SAFETY: stream and replacement buffer pointers are valid for this call.
+  let unaffected_replacement_status = unsafe {
+    setvbuf(
+      unaffected_stream,
+      unaffected_replacement_buffer.as_mut_ptr().cast(),
+      _IOLBF,
+      unaffected_replacement_buffer
+        .len()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("usize length must fit size_t")),
+    )
+  };
+
+  assert_eq!(unaffected_replacement_status, 0);
+  assert_eq!(read_errno(), 83);
+
+  // SAFETY: even after injected fd close, `fclose` is still required to release FILE state.
+  let _ = unsafe { fclose(failing_stream) };
+}
+
+#[test]
+fn fflush_null_stream_failure_preserves_positive_errno_when_any_host_stream_flush_fails() {
   let _guard = test_lock();
   let payload = b"i022-flush-all\n\0";
 
@@ -370,13 +671,17 @@ fn fflush_null_stream_returns_eof_when_any_host_stream_flush_fails() {
 
   assert_eq!(close_status, 0, "closing failing stream fd must succeed");
 
-  write_errno(0);
+  write_errno(89);
 
   // SAFETY: C contract allows `fflush(NULL)` to flush all output streams.
   let flush_status = unsafe { fflush(null_mut()) };
 
   assert_eq!(flush_status, EOF);
-  assert_ne!(read_errno(), 0);
+  assert_eq!(
+    read_errno(),
+    89,
+    "flush-all failure must preserve caller-visible positive errno"
+  );
 
   // SAFETY: valid file descriptor seek/read after flush-all to verify other streams still flush.
   let seek_status = unsafe { lseek(valid_fd, 0, SEEK_SET) };
@@ -432,13 +737,17 @@ fn fflush_null_failure_still_marks_stdout_as_io_active_for_late_setvbuf() {
 
   assert_eq!(close_status, 0, "closing failing stream fd must succeed");
 
-  write_errno(0);
+  write_errno(43);
 
   // SAFETY: C contract allows `fflush(NULL)` to flush all output streams.
   let flush_status = unsafe { fflush(null_mut()) };
 
   assert_eq!(flush_status, EOF);
-  assert_ne!(read_errno(), 0);
+  assert_eq!(
+    read_errno(),
+    43,
+    "flush-all failure must preserve caller-visible positive errno"
+  );
 
   write_errno(0);
   // SAFETY: host libc provides `stdout` global stream pointer.
@@ -487,13 +796,17 @@ fn fflush_null_failure_still_marks_stderr_as_io_active_for_late_setvbuf() {
 
   assert_eq!(close_status, 0, "closing failing stream fd must succeed");
 
-  write_errno(0);
+  write_errno(47);
 
   // SAFETY: C contract allows `fflush(NULL)` to flush all output streams.
   let flush_status = unsafe { fflush(null_mut()) };
 
   assert_eq!(flush_status, EOF);
-  assert_ne!(read_errno(), 0);
+  assert_eq!(
+    read_errno(),
+    47,
+    "flush-all failure must preserve caller-visible positive errno"
+  );
 
   write_errno(0);
   // SAFETY: host libc provides `stderr` global stream pointer.
@@ -542,13 +855,17 @@ fn fflush_null_failure_still_marks_stdin_as_io_active_for_late_setvbuf() {
 
   assert_eq!(close_status, 0, "closing failing stream fd must succeed");
 
-  write_errno(0);
+  write_errno(51);
 
   // SAFETY: C contract allows `fflush(NULL)` to flush all output streams.
   let flush_status = unsafe { fflush(null_mut()) };
 
   assert_eq!(flush_status, EOF);
-  assert_ne!(read_errno(), 0);
+  assert_eq!(
+    read_errno(),
+    51,
+    "flush-all failure must preserve caller-visible positive errno"
+  );
 
   write_errno(0);
   // SAFETY: host libc provides `stdin` global stream pointer.
@@ -570,11 +887,62 @@ fn fflush_null_failure_still_marks_stdin_as_io_active_for_late_setvbuf() {
 }
 
 #[test]
-fn fflush_null_failure_marks_tracked_stream_active_for_late_setvbuf() {
+fn fflush_null_failure_does_not_mark_fresh_non_stdio_stream_active() {
+  let _guard = test_lock();
+  let payload = b"i022-flush-all-failure-fresh-non-stdio\n\0";
+  let fresh_stream = fresh_non_stdio_stream();
+  let mut user_buffer = [0_u8; 16];
+
+  // SAFETY: host libc provides a valid stream or null on allocation failure.
+  let failing_stream = unsafe { tmpfile() };
+
+  assert!(
+    !failing_stream.is_null(),
+    "tmpfile for failing stream must succeed"
+  );
+
+  // SAFETY: stream and payload pointers are valid for host fputs.
+  let failing_write = unsafe { fputs(payload.as_ptr().cast(), failing_stream) };
+
+  assert!(failing_write >= 0, "priming failing stream must succeed");
+  // SAFETY: `fileno` expects a valid host `FILE*`.
+  let failing_fd = unsafe { fileno(failing_stream) };
+
+  assert!(failing_fd >= 0, "failing stream must have an fd");
+  // SAFETY: explicit fd close is used to induce host fflush failure.
+  let close_status = unsafe { close(failing_fd) };
+
+  assert_eq!(close_status, 0, "closing failing stream fd must succeed");
+
+  write_errno(53);
+
+  // SAFETY: C contract allows `fflush(NULL)` to flush all output streams.
+  let flush_status = unsafe { fflush(null_mut()) };
+
+  assert_eq!(flush_status, EOF);
+  assert_eq!(
+    read_errno(),
+    53,
+    "flush-all failure must preserve caller-visible positive errno"
+  );
+
+  write_errno(71);
+
+  // SAFETY: stream and buffer pointers are valid for this call.
+  let setvbuf_status = unsafe { setvbuf(fresh_stream, user_buffer.as_mut_ptr().cast(), _IONBF, 0) };
+
+  assert_eq!(setvbuf_status, 0);
+  assert_eq!(read_errno(), 71);
+
+  // SAFETY: even after injected fd close, `fclose` is still required to release FILE state.
+  let _ = unsafe { fclose(failing_stream) };
+}
+
+#[test]
+fn fflush_null_failure_marks_registered_non_stdio_stream_active_for_late_setvbuf() {
   let _guard = test_lock();
   let payload = b"i022-flush-all-failure-tracked\n\0";
-  let mut marker = 0_u8;
-  let tracked_stream = core::ptr::from_mut(&mut marker).cast::<FILE>();
+  let tracked_stream = fresh_non_stdio_stream();
   let mut initial_buffer = [0_u8; 8];
   let mut replacement_buffer = [0_u8; 16];
 
@@ -613,13 +981,17 @@ fn fflush_null_failure_marks_tracked_stream_active_for_late_setvbuf() {
 
   assert_eq!(close_status, 0, "closing failing stream fd must succeed");
 
-  write_errno(0);
+  write_errno(59);
 
   // SAFETY: C contract allows `fflush(NULL)` to flush all output streams.
   let flush_status = unsafe { fflush(null_mut()) };
 
   assert_eq!(flush_status, EOF);
-  assert_ne!(read_errno(), 0);
+  assert_eq!(
+    read_errno(),
+    59,
+    "flush-all failure must preserve caller-visible positive errno"
+  );
 
   write_errno(0);
 

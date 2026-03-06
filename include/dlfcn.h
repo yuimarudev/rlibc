@@ -9,6 +9,8 @@ extern "C" {
 #define RTLD_NOW 0x0002
 #define RTLD_GLOBAL 0x0100
 #define RTLD_LOCAL 0
+#define RTLD_DEFAULT ((void *)0)
+#define RTLD_NEXT ((void *)-1l)
 
 void *dlopen(const char *filename, int flags);
 int dlclose(void *handle);

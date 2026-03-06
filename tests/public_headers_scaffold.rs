@@ -71,6 +71,20 @@ fn all_header_paths_relative() -> Vec<String> {
     .collect()
 }
 
+fn expected_include_guard(header_path: &str) -> String {
+  let mut guard = String::from("RLIBC_");
+
+  for character in header_path.chars() {
+    if character.is_ascii_alphanumeric() {
+      guard.push(character.to_ascii_uppercase());
+    } else {
+      guard.push('_');
+    }
+  }
+
+  guard
+}
+
 fn find_c_compiler() -> Option<String> {
   let mut candidates = Vec::new();
 
@@ -1362,6 +1376,47 @@ fn required_header_files_exist() {
 }
 
 #[test]
+fn public_headers_use_expected_include_guards() {
+  for header_path in all_header_paths_relative() {
+    let header = read_text(&include_root().join(&header_path));
+    let guard = expected_include_guard(&header_path);
+    let ifndef = format!("#ifndef {guard}");
+    let define = format!("#define {guard}");
+    let ifndef_count = header.matches(&ifndef).count();
+    let define_count = header.matches(&define).count();
+    let ifndef_pos = header.find(&ifndef).unwrap_or_else(|| {
+      panic!("{header_path} should declare expected include guard opening `{ifndef}`")
+    });
+    let define_pos = header.find(&define).unwrap_or_else(|| {
+      panic!("{header_path} should declare expected include guard definition `{define}`")
+    });
+    let last_non_empty_line = header
+      .lines()
+      .rev()
+      .find(|line| !line.trim().is_empty())
+      .unwrap_or_else(|| panic!("{header_path} should not be empty"));
+
+    assert_eq!(
+      ifndef_count, 1,
+      "{header_path} should declare `{ifndef}` exactly once",
+    );
+    assert_eq!(
+      define_count, 1,
+      "{header_path} should declare `{define}` exactly once",
+    );
+    assert!(
+      ifndef_pos < define_pos,
+      "{header_path} should define `{guard}` after opening its include guard",
+    );
+    assert_eq!(
+      last_non_empty_line.trim(),
+      "#endif",
+      "{header_path} should end with a closing #endif for its top-level include guard",
+    );
+  }
+}
+
+#[test]
 fn signal_header_covers_delivery_and_mask_symbols() {
   let signal_header = read_header("signal.h");
 
@@ -1966,7 +2021,10 @@ fn dlfcn_header_covers_minimal_dynamic_loader_symbols() {
   assert!(dlfcn_header.contains("#define RTLD_NOW 0x0002"));
   assert!(dlfcn_header.contains("#define RTLD_GLOBAL 0x0100"));
   assert!(dlfcn_header.contains("#define RTLD_LOCAL 0"));
+  assert!(dlfcn_header.contains("#define RTLD_DEFAULT ((void *)0)"));
+  assert!(dlfcn_header.contains("#define RTLD_NEXT ((void *)-1l)"));
   assert!(dlfcn_header.contains("void *dlopen(const char *filename, int flags);"));
+  assert!(dlfcn_header.contains("int dlclose(void *handle);"));
   assert!(dlfcn_header.contains("char *dlerror(void);"));
   assert!(dlfcn_header.contains("void *dlsym(void *handle, const char *symbol);"));
 }
@@ -1995,18 +2053,42 @@ fn ctype_and_locale_headers_cover_core_symbols() {
 }
 
 #[test]
-fn stdio_header_covers_setvbuf_and_vsnprintf_symbols() {
+fn stdio_header_covers_buffering_and_format_symbols() {
   let stdio_header = read_header("stdio.h");
+  let expected_stdio_prototype_block = "\
+typedef struct FILE FILE;
+
+FILE *tmpfile(void);
+FILE *fopen(const char *path, const char *mode);
+size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+int fputs(const char *s, FILE *stream);
+int fileno(FILE *stream);
+int fileno_unlocked(FILE *stream);
+void flockfile(FILE *stream);
+int ftrylockfile(FILE *stream);
+void funlockfile(FILE *stream);
+int fclose(FILE *stream);
+void setbuffer(FILE *stream, char *buffer, size_t size);
+void setbuf(FILE *stream, char *buffer);
+void setlinebuf(FILE *stream);
+int setvbuf(FILE *stream, char *buffer, int mode, size_t size);
+int fflush(FILE *stream);
+int vsnprintf(char *s, size_t n, const char *format, va_list ap);
+int vfprintf(FILE *stream, const char *format, va_list ap);
+int vprintf(const char *format, va_list ap);
+int fprintf(FILE *stream, const char *format, ...);
+int printf(const char *format, ...);
+";
 
   assert!(stdio_header.contains("#ifndef RLIBC_STDIO_H"));
   assert!(stdio_header.contains("#define EOF (-1)"));
+  assert!(stdio_header.contains("#define BUFSIZ 8192"));
   assert!(stdio_header.contains("#define _IOFBF 0"));
   assert!(stdio_header.contains("#define _IOLBF 1"));
   assert!(stdio_header.contains("#define _IONBF 2"));
-  assert!(stdio_header.contains("typedef struct FILE FILE;"));
-  assert!(stdio_header.contains("int setvbuf(FILE *stream, char *buffer, int mode, size_t size);"));
   assert!(
-    stdio_header.contains("int vsnprintf(char *s, size_t n, const char *format, va_list ap);")
+    stdio_header.contains(expected_stdio_prototype_block),
+    "stdio.h must pin the FILE declaration and stdio prototype block, including the host-backed file I/O surface, fileno_unlocked, the buffering wrappers, and the flockfile family, in public header order",
   );
 }
 
@@ -2031,6 +2113,26 @@ fn string_and_stdlib_headers_cover_current_exported_symbols() {
   );
   assert!(stdlib_header.contains("void __libc_start_main(int (*main)(int, char **, char **), int argc, char **argv, char **envp);"));
   assert!(stdlib_header.contains("void _Exit(int status);"));
+}
+
+#[test]
+fn stdlib_header_pins_allocation_prototypes() {
+  let stdlib_header = read_header("stdlib.h");
+
+  assert!(stdlib_header.contains("void *malloc(size_t size);"));
+  assert!(stdlib_header.contains("void *calloc(size_t nmemb, size_t size);"));
+  assert!(stdlib_header.contains("void *realloc(void *ptr, size_t size);"));
+  assert!(stdlib_header.contains("void *reallocarray(void *ptr, size_t nmemb, size_t size);"));
+  assert!(stdlib_header.contains("size_t malloc_usable_size(void *ptr);"));
+  assert!(stdlib_header.contains("void free(void *ptr);"));
+  assert!(stdlib_header.contains("void cfree(void *ptr);"));
+  assert!(stdlib_header.contains("void *aligned_alloc(size_t alignment, size_t size);"));
+  assert!(
+    stdlib_header.contains("int posix_memalign(void **memptr, size_t alignment, size_t size);")
+  );
+  assert!(stdlib_header.contains("void *memalign(size_t alignment, size_t size);"));
+  assert!(stdlib_header.contains("void *valloc(size_t size);"));
+  assert!(stdlib_header.contains("void *pvalloc(size_t size);"));
 }
 
 #[test]
@@ -2109,6 +2211,12 @@ fn fcntl_unistd_and_system_headers_cover_file_and_system_symbols() {
 
   assert!(unistd_header.contains("#ifndef RLIBC_UNISTD_H"));
   assert!(unistd_header.contains("typedef __PTRDIFF_TYPE__ ssize_t;"));
+  assert!(unistd_header.contains("typedef __INT64_TYPE__ off_t;"));
+  assert!(unistd_header.contains("typedef __UINT32_TYPE__ uid_t;"));
+  assert!(unistd_header.contains("typedef __UINT32_TYPE__ gid_t;"));
+  assert!(unistd_header.contains("#define SEEK_SET 0"));
+  assert!(unistd_header.contains("#define SEEK_CUR 1"));
+  assert!(unistd_header.contains("#define SEEK_END 2"));
   assert!(unistd_header.contains("#define MSG_PEEK 0x2"));
   assert!(unistd_header.contains("#define MSG_DONTWAIT 0x40"));
   assert!(unistd_header.contains("#define MSG_WAITALL 0x100"));
@@ -2116,15 +2224,40 @@ fn fcntl_unistd_and_system_headers_cover_file_and_system_symbols() {
   assert!(unistd_header.contains("#define _SC_CLK_TCK 2"));
   assert!(unistd_header.contains("#define _SC_OPEN_MAX 4"));
   assert!(unistd_header.contains("#define _SC_PAGESIZE 30"));
+  assert!(unistd_header.contains("#define _SC_PAGE_SIZE 30"));
   assert!(unistd_header.contains("#define _SC_NPROCESSORS_CONF 83"));
   assert!(unistd_header.contains("#define _SC_NPROCESSORS_ONLN 84"));
   assert!(unistd_header.contains("#define HOST_NAME_MAX 64"));
+  assert!(unistd_header.contains("int access(const char *pathname, int mode);"));
+  assert!(unistd_header.contains("int close(int fd);"));
+  assert!(unistd_header.contains("int dup(int oldfd);"));
+  assert!(unistd_header.contains("int dup2(int oldfd, int newfd);"));
+  assert!(unistd_header.contains("int dup3(int oldfd, int newfd, int flags);"));
+  assert!(unistd_header.contains("int pipe(int pipefd[2]);"));
+  assert!(unistd_header.contains("int pipe2(int pipefd[2], int flags);"));
+  assert!(unistd_header.contains("int fsync(int fd);"));
+  assert!(unistd_header.contains("int fdatasync(int fd);"));
+  assert!(unistd_header.contains("int syncfs(int fd);"));
+  assert!(unistd_header.contains("void sync(void);"));
+  assert!(unistd_header.contains("int getpid(void);"));
+  assert!(unistd_header.contains("int getppid(void);"));
+  assert!(unistd_header.contains("int getpgid(int pid);"));
+  assert!(unistd_header.contains("int getpgrp(void);"));
+  assert!(unistd_header.contains("int getsid(int pid);"));
+  assert!(unistd_header.contains("int gettid(void);"));
+  assert!(unistd_header.contains("uid_t getuid(void);"));
+  assert!(unistd_header.contains("uid_t geteuid(void);"));
+  assert!(unistd_header.contains("gid_t getgid(void);"));
+  assert!(unistd_header.contains("gid_t getegid(void);"));
+  assert!(unistd_header.contains("int isatty(int fd);"));
+  assert!(unistd_header.contains("off_t lseek(int fd, off_t offset, int whence);"));
   assert!(unistd_header.contains("ssize_t read(int fd, void *buf, size_t count);"));
   assert!(unistd_header.contains("ssize_t write(int fd, const void *buf, size_t count);"));
   assert!(
     unistd_header.contains("ssize_t send(int sockfd, const void *buf, size_t len, int flags);")
   );
   assert!(unistd_header.contains("ssize_t recv(int sockfd, void *buf, size_t len, int flags);"));
+  assert!(unistd_header.contains("int unlink(const char *pathname);"));
   assert!(unistd_header.contains("int gethostname(char *name, size_t len);"));
   assert!(unistd_header.contains("int getpagesize(void);"));
   assert!(unistd_header.contains("long sysconf(int name);"));
@@ -2250,10 +2383,60 @@ fn public_headers_compile_as_c_translation_unit() {
 }
 
 #[test]
+fn public_headers_can_be_reincluded_in_single_c_translation_unit() {
+  let compiler = find_c_compiler()
+    .unwrap_or_else(|| panic!("no C compiler found in PATH (checked CC, cc, clang, gcc)"));
+  let source = all_header_paths_relative()
+    .into_iter()
+    .flat_map(|header| {
+      [
+        format!("#include <{header}>"),
+        format!("#include <{header}>"),
+      ]
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+  let nonce = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_nanos();
+  let source_path = std::env::temp_dir().join(format!(
+    "rlibc_public_headers_reinclude_{}_{}.c",
+    std::process::id(),
+    nonce
+  ));
+  let translation_unit = format!("{source}\n\nint main(void) {{ return 0; }}\n");
+
+  std::fs::write(&source_path, translation_unit)
+    .unwrap_or_else(|error| panic!("failed to write {}: {error}", source_path.display()));
+
+  let output = Command::new(&compiler)
+    .arg("-std=c11")
+    .arg("-fsyntax-only")
+    .arg("-I")
+    .arg(include_root())
+    .arg(&source_path)
+    .output()
+    .unwrap_or_else(|error| panic!("failed to execute {compiler}: {error}"));
+  let _ = std::fs::remove_file(&source_path);
+
+  assert!(
+    output.status.success(),
+    "{compiler} failed for {}.\nstdout:\n{}\nstderr:\n{}",
+    source_path.display(),
+    String::from_utf8_lossy(&output.stdout),
+    String::from_utf8_lossy(&output.stderr),
+  );
+}
+
+#[test]
 fn dlfcn_header_covers_dlsym_symbol() {
   let dlfcn_header = read_header("dlfcn.h");
 
   assert!(dlfcn_header.contains("#ifndef RLIBC_DLFCN_H"));
+  assert!(dlfcn_header.contains("#define RTLD_DEFAULT ((void *)0)"));
+  assert!(dlfcn_header.contains("#define RTLD_NEXT ((void *)-1l)"));
+  assert!(dlfcn_header.contains("int dlclose(void *handle);"));
   assert!(dlfcn_header.contains("char *dlerror(void);"));
   assert!(dlfcn_header.contains("void *dlsym(void *handle, const char *symbol);"));
 }
@@ -2280,6 +2463,67 @@ fn pthread_header_covers_rwlock_symbols() {
   assert!(pthread_header.contains("int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock);"));
   assert!(pthread_header.contains("int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock);"));
   assert!(pthread_header.contains("int pthread_rwlock_unlock(pthread_rwlock_t *rwlock);"));
+}
+
+#[test]
+fn pthread_header_covers_mutex_and_condition_attr_symbols() {
+  let pthread_header = read_header("pthread.h");
+
+  assert!(pthread_header.contains("pthread_mutex_t;"));
+  assert!(pthread_header.contains("pthread_mutexattr_t;"));
+  assert!(pthread_header.contains("pthread_cond_t;"));
+  assert!(pthread_header.contains("pthread_condattr_t;"));
+  assert!(pthread_header.contains("#define PTHREAD_MUTEX_NORMAL 0"));
+  assert!(pthread_header.contains("#define PTHREAD_MUTEX_RECURSIVE 1"));
+  assert!(pthread_header.contains("#define PTHREAD_MUTEX_ERRORCHECK 2"));
+  assert!(pthread_header.contains("#define PTHREAD_MUTEX_DEFAULT PTHREAD_MUTEX_NORMAL"));
+  assert!(pthread_header.contains("#define PTHREAD_PROCESS_PRIVATE 0"));
+  assert!(pthread_header.contains("#define PTHREAD_PROCESS_SHARED 1"));
+  assert!(pthread_header.contains("int pthread_mutexattr_init(pthread_mutexattr_t *attr);"));
+  assert!(pthread_header.contains("int pthread_mutexattr_destroy(pthread_mutexattr_t *attr);"));
+  assert!(
+    pthread_header
+      .contains("int pthread_mutexattr_gettype(const pthread_mutexattr_t *attr, int *type);")
+  );
+  assert!(
+    pthread_header.contains("int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type);")
+  );
+  assert!(
+    pthread_header
+      .contains("int pthread_mutexattr_getpshared(const pthread_mutexattr_t *attr, int *pshared);")
+  );
+  assert!(
+    pthread_header
+      .contains("int pthread_mutexattr_setpshared(pthread_mutexattr_t *attr, int pshared);")
+  );
+  assert!(
+    pthread_header
+      .contains("int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr);")
+  );
+  assert!(pthread_header.contains("int pthread_mutex_destroy(pthread_mutex_t *mutex);"));
+  assert!(pthread_header.contains("int pthread_mutex_lock(pthread_mutex_t *mutex);"));
+  assert!(pthread_header.contains("int pthread_mutex_trylock(pthread_mutex_t *mutex);"));
+  assert!(pthread_header.contains("int pthread_mutex_unlock(pthread_mutex_t *mutex);"));
+  assert!(pthread_header.contains("int pthread_condattr_init(pthread_condattr_t *attr);"));
+  assert!(pthread_header.contains("int pthread_condattr_destroy(pthread_condattr_t *attr);"));
+  assert!(
+    pthread_header
+      .contains("int pthread_condattr_getpshared(const pthread_condattr_t *attr, int *pshared);")
+  );
+  assert!(
+    pthread_header
+      .contains("int pthread_condattr_setpshared(pthread_condattr_t *attr, int pshared);")
+  );
+  assert!(
+    pthread_header
+      .contains("int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr);")
+  );
+  assert!(pthread_header.contains("int pthread_cond_destroy(pthread_cond_t *cond);"));
+  assert!(
+    pthread_header.contains("int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);")
+  );
+  assert!(pthread_header.contains("int pthread_cond_signal(pthread_cond_t *cond);"));
+  assert!(pthread_header.contains("int pthread_cond_broadcast(pthread_cond_t *cond);"));
 }
 
 #[test]

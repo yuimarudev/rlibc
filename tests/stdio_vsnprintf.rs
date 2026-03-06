@@ -227,6 +227,27 @@ fn percent_escape_is_rendered_as_single_percent() {
 }
 
 #[test]
+fn alternate_octal_zero_pad_preserves_zero_padding() {
+  let mut buffer = [0_u8; 16];
+  let mut ap = OwnedVaList::from_u64_slots(vec![u32_slot(10)]);
+
+  set_errno(0);
+  // SAFETY: buffer/format are valid and `ap` matches one unsigned argument.
+  let result = unsafe {
+    vsnprintf(
+      buffer.as_mut_ptr().cast(),
+      as_size_t(buffer.len()),
+      as_format_ptr(b"|%#08o|\0"),
+      ap.as_mut_ptr(),
+    )
+  };
+
+  assert_eq!(result, 10);
+  assert_eq!(&buffer[..11], b"|00000012|\0");
+  assert_eq!(read_errno(), 0);
+}
+
+#[test]
 fn repeated_percent_escapes_report_full_length_under_truncation() {
   let mut buffer = [b'X'; 3];
 
@@ -1451,7 +1472,7 @@ fn count_conversion_ln_and_lln_include_escaped_percent_lengths_under_truncation(
 }
 
 #[test]
-fn count_conversion_rejects_width_directive() {
+fn count_conversion_accepts_width_directive() {
   let mut buffer = [b'Q'; 8];
   let mut count: c_int = 123;
   let mut ap =
@@ -1468,14 +1489,14 @@ fn count_conversion_rejects_width_directive() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..2], b"z\0");
-  assert_eq!(count, 123);
+  assert_eq!(result, 2);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..3], b"z!\0");
+  assert_eq!(count, 1);
 }
 
 #[test]
-fn count_conversion_rejects_dynamic_width_directive() {
+fn count_conversion_accepts_dynamic_width_directive() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 64;
   let mut ap = OwnedVaList::from_u64_slots(vec![
@@ -1494,14 +1515,14 @@ fn count_conversion_rejects_dynamic_width_directive() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 64);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]
-fn count_conversion_rejects_dynamic_precision_directive() {
+fn count_conversion_accepts_dynamic_precision_directive() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 64;
   let mut ap = OwnedVaList::from_u64_slots(vec![
@@ -1520,14 +1541,14 @@ fn count_conversion_rejects_dynamic_precision_directive() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 64);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]
-fn count_conversion_rejects_left_align_flag() {
+fn count_conversion_accepts_left_align_flag() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 55;
   let mut ap =
@@ -1544,14 +1565,14 @@ fn count_conversion_rejects_left_align_flag() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 55);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]
-fn count_conversion_rejects_zero_pad_flag() {
+fn count_conversion_accepts_zero_pad_flag() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 55;
   let mut ap =
@@ -1568,14 +1589,14 @@ fn count_conversion_rejects_zero_pad_flag() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 55);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]
-fn count_conversion_rejects_alternate_flag() {
+fn count_conversion_accepts_alternate_flag() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 55;
   let mut ap =
@@ -1592,14 +1613,14 @@ fn count_conversion_rejects_alternate_flag() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 55);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]
-fn count_conversion_rejects_force_sign_flag() {
+fn count_conversion_accepts_force_sign_flag() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 55;
   let mut ap =
@@ -1616,14 +1637,14 @@ fn count_conversion_rejects_force_sign_flag() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 55);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]
-fn count_conversion_rejects_leading_space_flag() {
+fn count_conversion_accepts_leading_space_flag() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 55;
   let mut ap =
@@ -1640,10 +1661,10 @@ fn count_conversion_rejects_leading_space_flag() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 55);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]
@@ -2107,7 +2128,7 @@ fn count_conversion_rejects_hn_overflow() {
 }
 
 #[test]
-fn count_conversion_rejects_precision_directive() {
+fn count_conversion_accepts_precision_directive() {
   let mut buffer = [b'Q'; 12];
   let mut count: c_int = 77;
   let mut ap =
@@ -2124,10 +2145,10 @@ fn count_conversion_rejects_precision_directive() {
     )
   };
 
-  assert_eq!(result, -1);
-  assert_eq!(read_errno(), EINVAL);
-  assert_eq!(&buffer[..3], b"ab\0");
-  assert_eq!(count, 77);
+  assert_eq!(result, 3);
+  assert_eq!(read_errno(), 0);
+  assert_eq!(&buffer[..4], b"abZ\0");
+  assert_eq!(count, 2);
 }
 
 #[test]

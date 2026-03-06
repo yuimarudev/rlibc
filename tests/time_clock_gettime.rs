@@ -245,10 +245,12 @@ fn dynamic_clockid_alias_for_negative_fd_matches_static_thread_cputime_result_cl
   let static_before = static_ts;
 
   write_errno(61);
+
   let alias_result = clock_gettime(fd_to_clockid(-1), &raw mut alias_ts);
   let alias_errno = read_errno();
 
   write_errno(62);
+
   let static_result = clock_gettime(CLOCK_THREAD_CPUTIME_ID, &raw mut static_ts);
   let static_errno = read_errno();
 
@@ -406,16 +408,19 @@ fn dynamic_clockid_alias_for_near_max_fd_after_null_timespec_matches_static_tai_
   assert_eq!(alias_clock_id, CLOCK_TAI);
 
   write_errno(EINVAL);
+
   let alias_null_result = clock_gettime(alias_clock_id, ptr::null_mut());
 
   assert_eq!(alias_null_result, -1);
   assert_eq!(read_errno(), EFAULT);
 
   write_errno(EFAULT);
+
   let alias_result = clock_gettime(alias_clock_id, &raw mut alias_ts);
   let alias_errno = read_errno();
 
   write_errno(EFAULT);
+
   let static_result = clock_gettime(CLOCK_TAI, &raw mut static_ts);
   let static_errno = read_errno();
 
@@ -463,16 +468,19 @@ fn dynamic_clockid_alias_for_near_max_fd_after_invalid_clock_id_matches_static_t
   assert_eq!(alias_clock_id, CLOCK_TAI);
 
   write_errno(0);
+
   let invalid_result = clock_gettime(9_999, &raw mut invalid_ts);
 
   assert_eq!(invalid_result, -1);
   assert_eq!(read_errno(), EINVAL);
 
   write_errno(EINVAL);
+
   let alias_result = clock_gettime(alias_clock_id, &raw mut alias_ts);
   let alias_errno = read_errno();
 
   write_errno(EINVAL);
+
   let static_result = clock_gettime(CLOCK_TAI, &raw mut static_ts);
   let static_errno = read_errno();
 
@@ -511,10 +519,12 @@ fn dynamic_clockid_alias_for_min_fd_after_null_timespec_matches_zero_fd_errno_co
   let zero_before = zero_ts;
 
   write_errno(EFAULT);
+
   let min_result = clock_gettime(fd_to_clockid(c_int::MIN), &raw mut min_ts);
   let min_errno = read_errno();
 
   write_errno(EFAULT);
+
   let zero_result = clock_gettime(fd_to_clockid(0), &raw mut zero_ts);
   let zero_errno = read_errno();
 
@@ -608,27 +618,32 @@ fn min_fd_and_zero_fd_alias_after_null_share_non_null_result_class_and_errno_con
     tv_nsec: 4_444,
   };
   let zero_before = zero_ts;
-
   let min_dynamic_clock_id = fd_to_clockid(c_int::MIN);
   let zero_dynamic_clock_id = fd_to_clockid(0);
 
   assert_eq!(min_dynamic_clock_id, zero_dynamic_clock_id);
 
   write_errno(EINVAL);
+
   let min_null_result = clock_gettime(min_dynamic_clock_id, ptr::null_mut());
+
   assert_eq!(min_null_result, -1);
   assert_eq!(read_errno(), EFAULT);
 
   write_errno(EINVAL);
+
   let zero_null_result = clock_gettime(zero_dynamic_clock_id, ptr::null_mut());
+
   assert_eq!(zero_null_result, -1);
   assert_eq!(read_errno(), EFAULT);
 
   write_errno(EFAULT);
+
   let min_result = clock_gettime(min_dynamic_clock_id, &raw mut min_ts);
   let min_errno = read_errno();
 
   write_errno(EFAULT);
+
   let zero_result = clock_gettime(zero_dynamic_clock_id, &raw mut zero_ts);
   let zero_errno = read_errno();
 
@@ -693,6 +708,7 @@ fn min_fd_and_zero_fd_alias_after_null_then_all_clock_ids_share_contract() {
       let before = ts;
 
       write_errno(EFAULT);
+
       let result = clock_gettime(*valid_clock_id, &raw mut ts);
 
       if result == 0 {
@@ -2318,6 +2334,7 @@ fn dynamic_alias_null_then_all_clocks_follow_errno_contract() {
       let before = ts;
 
       write_errno(EFAULT);
+
       let errno_before_call = read_errno();
       let result = clock_gettime(*valid_clock_id, &raw mut ts);
 

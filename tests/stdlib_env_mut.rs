@@ -59,6 +59,30 @@ fn c_string(input: &str) -> CString {
     .unwrap_or_else(|_| unreachable!("test literals must not include interior NUL bytes"))
 }
 
+fn visible_proc_environ_name() -> CString {
+  let proc_environ =
+    std::fs::read("/proc/self/environ").expect("expected /proc/self/environ to be readable");
+
+  for entry in proc_environ.split(|byte| *byte == 0) {
+    if entry.is_empty() || !entry.contains(&b'=') {
+      continue;
+    }
+
+    let equal_pos = entry
+      .iter()
+      .position(|byte| *byte == b'=')
+      .expect("proc environ entry must contain '='");
+    let name = CString::new(entry[..equal_pos].to_vec())
+      .expect("proc environ name must not contain interior NUL");
+
+    if getenv_bytes(&name).is_some() {
+      return name;
+    }
+  }
+
+  panic!("expected at least one /proc/self/environ entry visible before clearenv");
+}
+
 fn restore_env(snapshot: &[(Vec<u8>, Vec<u8>)]) {
   // SAFETY: C ABI allows clearing process environment; failures are ignored in cleanup.
   unsafe {
@@ -469,6 +493,27 @@ fn clearenv_when_empty_preserves_errno() {
 }
 
 #[test]
+fn clearenv_when_empty_does_not_resurrect_proc_environ_entries() {
+  let _env = EnvScope::new();
+  let proc_name = visible_proc_environ_name();
+
+  // SAFETY: `clearenv` mutates process environment and takes no pointers.
+  assert_eq!(unsafe { clearenv() }, 0);
+  assert_eq!(getenv_bytes(&proc_name), None);
+
+  write_errno(96);
+
+  // SAFETY: `clearenv` mutates process environment and takes no pointers.
+  assert_eq!(unsafe { clearenv() }, 0);
+  assert_eq!(read_errno(), 96);
+  assert_eq!(
+    getenv_bytes(&proc_name),
+    None,
+    "clearenv on an already empty environment must not resurrect /proc/self/environ entries",
+  );
+}
+
+#[test]
 fn clearenv_clears_putenv_aliases_and_preserves_errno() {
   let _env = EnvScope::new();
   let tracked_name = c_string("RLIBC_I017_CLEARENV_ALIAS_TRACKED");
@@ -558,6 +603,29 @@ fn clearenv_i016_clears_rebound_empty_putenv_alias_without_resurrection() {
   second[value_start] = b'z';
 
   assert_eq!(getenv_bytes(&tracked_name), None);
+}
+
+#[test]
+fn setenv_after_clearenv_keeps_proc_environ_entries_cleared() {
+  let _env = EnvScope::new();
+  let proc_name = visible_proc_environ_name();
+  let name = c_string("RLIBC_I017_SETENV_AFTER_CLEARENV_EMPTY_ENV");
+  let value = c_string("fresh");
+
+  // SAFETY: `clearenv` mutates process environment and takes no pointers.
+  assert_eq!(unsafe { clearenv() }, 0);
+  assert_eq!(getenv_bytes(&proc_name), None);
+
+  // SAFETY: `name`/`value` pointers are valid NUL-terminated strings.
+  let set_result = unsafe { setenv(name.as_ptr(), value.as_ptr(), 1) };
+
+  assert_eq!(set_result, 0);
+  assert_eq!(getenv_bytes(&name), Some(b"fresh".to_vec()));
+  assert_eq!(
+    getenv_bytes(&proc_name),
+    None,
+    "adding a new entry after clearenv must not resurrect prior host environment entries",
+  );
 }
 
 #[test]

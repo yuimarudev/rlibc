@@ -2,10 +2,19 @@
 //!
 //! This module provides `getenv` and `environ` for libc-like callers.
 
-use crate::stdlib::env_mut::{host_getenv, lookup_putenv_alias_value};
+use crate::errno::__errno_location;
+use crate::stdlib::env_mut::{
+  ensure_owned_environ_initialized_for_lookup, lock_environ_state, lookup_putenv_alias_value,
+  owned_environ_initialized_for_lookup,
+};
 use core::ffi::c_char;
 use core::ptr;
-use std::ffi::CStr;
+use std::cell::RefCell;
+use std::ffi::{CStr, CString};
+
+thread_local! {
+  static PROC_ENV_FALLBACK_VALUE: RefCell<Option<CString>> = const { RefCell::new(None) };
+}
 
 /// C ABI variable for process environment vector access.
 ///
@@ -49,13 +58,51 @@ unsafe fn lookup_environ_value(name_bytes: &[u8]) -> *mut c_char {
   }
 }
 
+fn lookup_proc_environ_value(name_bytes: &[u8]) -> *mut c_char {
+  let Ok(contents) = std::fs::read("/proc/self/environ") else {
+    return ptr::null_mut();
+  };
+
+  for entry in contents.split(|byte| *byte == 0) {
+    if entry.is_empty() {
+      continue;
+    }
+
+    let Some(equal_pos) = entry.iter().position(|byte| *byte == b'=') else {
+      continue;
+    };
+
+    if &entry[..equal_pos] != name_bytes {
+      continue;
+    }
+
+    let value_bytes = &entry[equal_pos + 1..];
+    let owned_value =
+      CString::new(value_bytes).unwrap_or_else(|_| unreachable!("split entry cannot contain NUL"));
+
+    return PROC_ENV_FALLBACK_VALUE.with(|slot| {
+      let mut slot = slot.borrow_mut();
+
+      *slot = Some(owned_value);
+
+      slot
+        .as_ref()
+        .map_or(ptr::null_mut(), |value| value.as_ptr().cast_mut())
+    });
+  }
+
+  ptr::null_mut()
+}
+
 /// C ABI entry point for `getenv`.
 ///
 /// Returns the value pointer for `name` from process environment.
 /// Lookup order:
 /// 1. active `putenv` alias tracking (caller-buffer semantics)
-/// 2. host libc `getenv` when symbol resolution is available
-/// 3. process `environ` vector fallback when host lookup is unavailable
+/// 2. process `environ` vector (bootstrapped from host environment snapshot
+///    when internal `environ` is still null)
+/// 3. `/proc/self/environ` fallback only before the owned snapshot has been
+///    initialized
 ///
 /// Returns null when `name` is null, invalid, or not found.
 ///
@@ -71,6 +118,8 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     return ptr::null_mut();
   }
 
+  let _guard = lock_environ_state();
+
   // SAFETY: The caller contract guarantees `name` points to a NUL-terminated C string.
   let name_bytes = unsafe { CStr::from_ptr(name).to_bytes() };
 
@@ -82,18 +131,43 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     return alias_value;
   }
 
-  // SAFETY: `name` remains valid for the duration of this call.
-  if let Some(host_value) = unsafe { host_getenv(name) } {
-    return host_value;
+  // Lazily bootstrap the owned environment snapshot for callers that invoke
+  // `getenv` before startup has bound `environ`.
+  let owned_snapshot_was_initialized = owned_environ_initialized_for_lookup();
+
+  if unsafe { environ }.is_null() && !owned_snapshot_was_initialized {
+    ensure_owned_environ_initialized_for_lookup();
   }
 
   // SAFETY: `name` remains valid for the duration of this call.
-  unsafe { lookup_environ_value(name_bytes) }
+  let environ_value = unsafe { lookup_environ_value(name_bytes) };
+
+  if !environ_value.is_null() {
+    return environ_value;
+  }
+
+  // SAFETY: reading raw pointer value without dereferencing.
+  if unsafe { environ }.is_null() && !owned_environ_initialized_for_lookup() {
+    // SAFETY: `__errno_location` returns readable/writable TLS errno.
+    let saved_errno = unsafe { __errno_location().read() };
+    let fallback_value = lookup_proc_environ_value(name_bytes);
+    // SAFETY: preserve `getenv` contract that leaves errno unchanged.
+    unsafe {
+      __errno_location().write(saved_errno);
+    }
+
+    return fallback_value;
+  }
+
+  ptr::null_mut()
 }
 
 #[cfg(test)]
 mod tests {
-  use crate::stdlib::env_mut::force_host_env_unavailable_for_test;
+  use crate::errno::__errno_location;
+  use crate::stdlib::env_mut::{
+    clearenv, force_owned_environ_empty_for_test, reset_owned_environ_for_test,
+  };
   use crate::stdlib::lock_environ_for_test;
   use core::ffi::c_char;
   use core::ptr;
@@ -102,25 +176,11 @@ mod tests {
 
   use super::{environ, getenv, lookup_environ_value};
 
-  struct EnvironReset {
-    previous: *mut *mut c_char,
-  }
+  struct OwnedEnvironReset;
 
-  impl EnvironReset {
-    fn capture() -> Self {
-      // SAFETY: Reading the raw global pointer does not dereference it.
-      let previous = unsafe { environ };
-
-      Self { previous }
-    }
-  }
-
-  impl Drop for EnvironReset {
+  impl Drop for OwnedEnvironReset {
     fn drop(&mut self) {
-      // SAFETY: Restoring the saved global pointer keeps test side effects local.
-      unsafe {
-        environ = self.previous;
-      }
+      reset_owned_environ_for_test();
     }
   }
 
@@ -155,7 +215,11 @@ mod tests {
   #[test]
   fn getenv_reads_existing_variable_value() {
     let _guard = lock_environ_for_test();
+    let _owned_reset = OwnedEnvironReset;
     let name = CString::new("RLIBC_I016_ENV_CORE_UNIT").expect("CString::new failed for name");
+
+    reset_owned_environ_for_test();
+
     // SAFETY: environment mutation is serialized by `lock_environ_for_test`.
     unsafe {
       env::set_var("RLIBC_I016_ENV_CORE_UNIT", "value");
@@ -179,9 +243,11 @@ mod tests {
   #[test]
   fn environ_placeholder_can_be_forced_to_null() {
     let _guard = lock_environ_for_test();
-    let _environ_reset = EnvironReset::capture();
+    let _owned_reset = OwnedEnvironReset;
 
-    // SAFETY: test-local reset; `EnvironReset` restores prior value on drop.
+    reset_owned_environ_for_test();
+
+    // SAFETY: test-local reset while environment access is serialized.
     unsafe {
       environ = ptr::null_mut();
     }
@@ -195,7 +261,7 @@ mod tests {
   #[test]
   fn lookup_environ_value_returns_value_for_matching_entry() {
     let _guard = lock_environ_for_test();
-    let _environ_reset = EnvironReset::capture();
+    let _owned_reset = OwnedEnvironReset;
     let mut first_entry = b"RLIBC_I016_ENV_SCAN_FIRST=first\0".to_vec();
     let mut target_entry = b"RLIBC_I016_ENV_SCAN_TARGET=expected\0".to_vec();
     let mut envp = [
@@ -204,6 +270,8 @@ mod tests {
       ptr::null_mut(),
     ];
     let name = b"RLIBC_I016_ENV_SCAN_TARGET";
+
+    reset_owned_environ_for_test();
 
     // SAFETY: `envp` references valid test-owned `NAME=VALUE` C strings and
     // remains alive for this lookup.
@@ -224,14 +292,15 @@ mod tests {
   }
 
   #[test]
-  fn getenv_falls_back_to_environ_when_host_getenv_is_unavailable() {
+  fn getenv_reads_from_environ_when_present() {
     let _guard = lock_environ_for_test();
-    let _host_unavailable = force_host_env_unavailable_for_test();
-    let _environ_reset = EnvironReset::capture();
+    let _owned_reset = OwnedEnvironReset;
     let mut target_entry = b"RLIBC_I016_GETENV_FALLBACK=from_environ\0".to_vec();
     let mut envp = [target_entry.as_mut_ptr().cast::<c_char>(), ptr::null_mut()];
     let name =
       CString::new("RLIBC_I016_GETENV_FALLBACK").expect("CString::new failed for fallback key");
+
+    reset_owned_environ_for_test();
 
     // SAFETY: `envp` references a valid NUL-terminated environment vector.
     unsafe {
@@ -248,5 +317,87 @@ mod tests {
       .to_vec();
 
     assert_eq!(value, b"from_environ");
+  }
+
+  #[test]
+  fn getenv_returns_null_when_environ_is_empty_and_variable_is_absent() {
+    let _guard = lock_environ_for_test();
+    let _owned_reset = OwnedEnvironReset;
+    let name =
+      CString::new("RLIBC_I016_GETENV_ABSENT").expect("CString::new failed for absent key");
+
+    reset_owned_environ_for_test();
+
+    // SAFETY: test-local setup while environment access is serialized.
+    unsafe {
+      env::remove_var("RLIBC_I016_GETENV_ABSENT");
+      environ = ptr::null_mut();
+    }
+
+    // SAFETY: `name` is a valid NUL-terminated key.
+    let value_ptr = unsafe { getenv(name.as_ptr()) };
+
+    assert!(value_ptr.is_null());
+  }
+
+  #[test]
+  fn getenv_bootstraps_environ_snapshot_when_internal_environ_is_empty() {
+    let _guard = lock_environ_for_test();
+    let _owned_reset = OwnedEnvironReset;
+
+    reset_owned_environ_for_test();
+
+    let Some((bootstrap_name, _)) = env::vars_os().next() else {
+      return;
+    };
+    let bootstrap_name = bootstrap_name
+      .into_string()
+      .expect("bootstrap variable name should be valid UTF-8 in this test");
+    let name = CString::new(bootstrap_name).expect("CString::new failed for bootstrap variable");
+
+    // SAFETY: test-local setup while environment access is serialized.
+    unsafe {
+      environ = ptr::null_mut();
+      __errno_location().write(67);
+    }
+
+    // SAFETY: `name` is a valid NUL-terminated key.
+    let value_ptr = unsafe { getenv(name.as_ptr()) };
+
+    assert!(!value_ptr.is_null());
+    // SAFETY: `getenv` preserves errno on successful lookup.
+    assert_eq!(unsafe { __errno_location().read() }, 67);
+  }
+
+  #[test]
+  fn getenv_does_not_fall_back_to_proc_environ_after_clearenv() {
+    let _guard = lock_environ_for_test();
+    let _owned_reset = OwnedEnvironReset;
+
+    reset_owned_environ_for_test();
+
+    let proc_environ = std::fs::read("/proc/self/environ")
+      .expect("expected /proc/self/environ to be readable for getenv fallback test");
+    let first_entry = proc_environ
+      .split(|byte| *byte == 0)
+      .find(|entry| !entry.is_empty() && entry.contains(&b'='))
+      .expect("expected at least one proc environ entry");
+    let equal_pos = first_entry
+      .iter()
+      .position(|byte| *byte == b'=')
+      .expect("proc environ entry must contain '='");
+    let name = CString::new(first_entry[..equal_pos].to_vec())
+      .expect("proc environ name must not contain interior NUL");
+
+    force_owned_environ_empty_for_test();
+    assert_eq!(clearenv(), 0, "clearenv should succeed");
+
+    // SAFETY: `name` is still a valid NUL-terminated key.
+    let after_clear = unsafe { getenv(name.as_ptr()) };
+
+    assert!(
+      after_clear.is_null(),
+      "getenv must not resurrect cleared variables from /proc/self/environ",
+    );
   }
 }

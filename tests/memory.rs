@@ -791,6 +791,7 @@ fn memmove_matches_copy_within_for_u128_all_in_bounds_byte_ranges() {
             expected.as_mut_ptr().cast::<u8>(),
             core::mem::size_of_val(&expected),
           );
+
           if copy_len != 0 {
             expected_bytes.copy_within(source_offset..source_offset + copy_len, destination_offset);
           }
@@ -844,6 +845,7 @@ fn memmove_matches_manual_temporary_for_u128_all_in_bounds_byte_ranges() {
             core::mem::size_of_val(&expected),
           );
           let mut temp = [0_u8; TOTAL_BYTES];
+
           if copy_len != 0 {
             temp[..copy_len]
               .copy_from_slice(&expected_bytes[source_offset..source_offset + copy_len]);
@@ -901,6 +903,7 @@ fn memmove_matches_manual_temporary_for_u64_all_in_bounds_byte_ranges() {
             core::mem::size_of_val(&expected),
           );
           let mut temp = [0_u8; 32];
+
           if copy_len != 0 {
             temp[..copy_len]
               .copy_from_slice(&expected_bytes[source_offset..source_offset + copy_len]);
@@ -970,6 +973,7 @@ fn memmove_unaligned_u128_word_boundary_lengths_match_copy_within() {
         expected.as_mut_ptr().cast::<u8>(),
         core::mem::size_of_val(&expected),
       );
+
       expected_bytes.copy_within(source_offset..source_offset + copy_len, destination_offset);
     }
 
@@ -1029,6 +1033,7 @@ fn memmove_u128_boundary_overlap_cases_match_manual_temporary() {
         core::mem::size_of_val(&expected),
       );
       let mut temp = [0_u8; 48];
+
       temp[..copy_len].copy_from_slice(&expected_bytes[source_offset..source_offset + copy_len]);
       expected_bytes[destination_offset..destination_offset + copy_len]
         .copy_from_slice(&temp[..copy_len]);
@@ -1082,9 +1087,9 @@ fn memmove_non_overlapping_unaligned_non_byte_ranges_match_copy_from_slice() {
       0xf1f2_f3f4,
     ];
     let mut expected_destination = actual_destination;
-
     let source_total_bytes = core::mem::size_of_val(&source);
     let destination_total_bytes = core::mem::size_of_val(&actual_destination);
+
     assert!(source_offset + copy_len <= source_total_bytes);
     assert!(destination_offset + copy_len <= destination_total_bytes);
 
@@ -1099,6 +1104,7 @@ fn memmove_non_overlapping_unaligned_non_byte_ranges_match_copy_from_slice() {
           .add(destination_offset),
         copy_len,
       );
+
       expected_destination_bytes.copy_from_slice(source_bytes);
     }
 
@@ -1160,6 +1166,7 @@ fn memmove_non_overlapping_u64_buffers_match_copy_from_slice_for_all_ranges() {
               .add(destination_offset),
             copy_len,
           );
+
           expected_destination_bytes.copy_from_slice(source_bytes);
         }
 
@@ -1222,6 +1229,7 @@ fn memmove_non_overlapping_u128_buffers_match_copy_from_slice_for_all_ranges() {
               .add(destination_offset),
             copy_len,
           );
+
           expected_destination_bytes.copy_from_slice(source_bytes);
         }
 
@@ -1284,6 +1292,7 @@ fn memmove_non_overlapping_distinct_size_non_byte_buffers_match_copy_from_slice(
               .add(destination_offset),
             copy_len,
           );
+
           expected_destination_bytes.copy_from_slice(source_bytes);
         }
 
@@ -1345,6 +1354,7 @@ fn memmove_non_overlapping_u16_to_u128_buffers_match_copy_from_slice_for_all_ran
               .add(destination_offset),
             copy_len,
           );
+
           expected_destination_bytes.copy_from_slice(source_bytes);
         }
 
@@ -1775,7 +1785,6 @@ fn memcpy_zero_length_allows_mixed_live_and_empty_array_with_distinct_alignments
   // SAFETY: `n == 0`, so pointers are never dereferenced.
   let returned_live_destination =
     unsafe { memcpy(live_destination.cast(), empty_source.cast(), sz(0)) }.cast::<u8>();
-
   let mut empty_destination_words: [u16; 0] = [];
   let live_source_words = [41_u32, 42, 43, 44];
   let empty_destination = empty_destination_words.as_mut_ptr().cast::<u8>();

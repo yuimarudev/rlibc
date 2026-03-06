@@ -1,6 +1,6 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 
-use rlibc::abi::errno::{EBUSY, EINVAL, ENOTSUP, EPERM, ETIMEDOUT};
+use rlibc::abi::errno::{EBUSY, EINVAL, EPERM, ETIMEDOUT};
 use rlibc::pthread::{
   PTHREAD_MUTEX_RECURSIVE, PTHREAD_PROCESS_PRIVATE, PTHREAD_PROCESS_SHARED, pthread_cond_broadcast,
   pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_t,
@@ -1133,30 +1133,25 @@ fn pthread_cond_init_rejects_invalid_pshared_attr_and_keeps_cond_uninitialized()
 }
 
 #[test]
-fn pthread_cond_init_rejects_process_shared_attr_and_keeps_cond_uninitialized() {
+fn pthread_cond_init_accepts_process_shared_attr() {
   let mut cond = pthread_cond_t::default();
   let mut attr = pthread_condattr_t::default();
+  let mut observed_pshared = -1;
 
   assert_eq!(pthread_condattr_init(&raw mut attr), 0);
+
   assert_eq!(
     pthread_condattr_setpshared(&raw mut attr, PTHREAD_PROCESS_SHARED),
-    ENOTSUP,
-  );
-
-  // SAFETY: `pthread_condattr_t` is `#[repr(C)]` and begins with `pshared: c_int`.
-  // This test-only mutation forces the unsupported process-shared branch.
-  unsafe {
-    (&raw mut attr)
-      .cast::<rlibc::abi::types::c_int>()
-      .write(PTHREAD_PROCESS_SHARED);
-  }
-
-  assert_eq!(pthread_cond_init(&raw mut cond, &raw const attr), ENOTSUP);
-  assert_eq!(
-    pthread_cond_destroy(&raw mut cond),
     0,
-    "zero-initialized cond remains destroyable when init rejects shared attributes",
   );
+  assert_eq!(
+    pthread_condattr_getpshared(&raw const attr, &raw mut observed_pshared),
+    0
+  );
+  assert_eq!(observed_pshared, PTHREAD_PROCESS_SHARED);
+
+  assert_eq!(pthread_cond_init(&raw mut cond, &raw const attr), 0);
+  assert_eq!(pthread_cond_destroy(&raw mut cond), 0);
   assert_eq!(pthread_condattr_destroy(&raw mut attr), 0);
 }
 
@@ -1281,23 +1276,20 @@ fn pthread_condattr_setpshared_private_round_trip() {
 }
 
 #[test]
-fn pthread_condattr_setpshared_shared_returns_enotsup() {
+fn pthread_condattr_setpshared_shared_round_trips() {
   let mut attr = pthread_condattr_t::default();
   let mut observed_pshared = -1;
 
   assert_eq!(pthread_condattr_init(&raw mut attr), 0);
   assert_eq!(
     pthread_condattr_setpshared(&raw mut attr, PTHREAD_PROCESS_SHARED),
-    ENOTSUP,
+    0,
   );
   assert_eq!(
     pthread_condattr_getpshared(&raw const attr, &raw mut observed_pshared),
     0,
   );
-  assert_eq!(
-    observed_pshared, PTHREAD_PROCESS_PRIVATE,
-    "unsupported shared setting must keep previous process-private value",
-  );
+  assert_eq!(observed_pshared, PTHREAD_PROCESS_SHARED);
   assert_eq!(pthread_condattr_destroy(&raw mut attr), 0);
 }
 

@@ -275,13 +275,59 @@ fn dlopen_rejects_conflicting_binding_modes_for_valid_shared_object_with_einval(
 }
 
 #[test]
-fn dlopen_null_filename_returns_null_and_einval() {
-  set_errno(0);
-  // SAFETY: null pointer is intentional to validate input checking.
+fn dlopen_null_filename_with_rtld_now_returns_main_program_handle_and_preserves_errno() {
+  set_errno(ENOEXEC);
+  // SAFETY: null filename requests the main-program loader handle.
   let handle = unsafe { dlopen(core::ptr::null(), RTLD_NOW) };
 
-  assert!(handle.is_null());
-  assert_eq!(errno_value(), EINVAL);
+  assert!(!handle.is_null(), "main-program handle should resolve");
+  assert_eq!(
+    errno_value(),
+    ENOEXEC,
+    "successful dlopen must preserve errno"
+  );
+  assert_eq!(dlclose(handle), 0, "main-program handle should be closable");
+}
+
+#[test]
+fn dlopen_null_filename_and_proc_self_exe_path_handles_are_both_closable() {
+  let proc_self_exe =
+    CString::new("/proc/self/exe").expect("static path must not contain interior NUL");
+
+  set_errno(ENOENT);
+  // SAFETY: null filename requests the main-program loader handle.
+  let null_handle = unsafe { dlopen(core::ptr::null(), RTLD_NOW) };
+
+  assert!(!null_handle.is_null(), "main-program handle should resolve");
+  assert_eq!(
+    errno_value(),
+    ENOENT,
+    "successful null-filename dlopen must preserve errno",
+  );
+
+  set_errno(ENOEXEC);
+  // SAFETY: `/proc/self/exe` path pointer is valid and NUL-terminated.
+  let proc_self_exe_handle = unsafe { dlopen(proc_self_exe.as_ptr().cast::<c_char>(), RTLD_NOW) };
+
+  assert!(
+    !proc_self_exe_handle.is_null(),
+    "/proc/self/exe should resolve to a main-program handle",
+  );
+  assert_eq!(
+    errno_value(),
+    ENOEXEC,
+    "successful /proc/self/exe dlopen must preserve errno",
+  );
+  assert_eq!(
+    dlclose(proc_self_exe_handle),
+    0,
+    "/proc/self/exe handle should be closable",
+  );
+  assert_eq!(
+    dlclose(null_handle),
+    0,
+    "null-filename handle should be closable"
+  );
 }
 
 #[test]

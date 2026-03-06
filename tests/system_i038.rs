@@ -418,7 +418,7 @@ fn gethostname_short_buffer_returns_enametoolong() {
 }
 
 #[test]
-fn gethostname_short_buffer_does_not_overwrite_existing_data() {
+fn gethostname_short_buffer_copies_prefix_before_enametoolong() {
   let nodename = nodename_from_uname();
 
   assert!(!nodename.is_empty(), "kernel nodename must not be empty");
@@ -431,17 +431,16 @@ fn gethostname_short_buffer_does_not_overwrite_existing_data() {
 
   assert_eq!(result, -1);
   assert_eq!(read_errno(), ENAMETOOLONG);
-  assert_eq!(buffer[0], 0x5a as c_char);
+  assert_eq!(buffer[0], nodename[0].cast_signed());
 }
 
 #[test]
-fn gethostname_required_minus_one_buffer_preserves_existing_data() {
+fn gethostname_payload_length_buffer_copies_full_name_without_nul() {
   let nodename = nodename_from_uname();
 
   assert!(!nodename.is_empty(), "kernel nodename must not be empty");
 
-  let required = nodename.len() + 1;
-  let mut buffer = vec![0x41 as c_char; required - 1];
+  let mut buffer = vec![0x41 as c_char; nodename.len()];
 
   write_errno(0);
 
@@ -449,7 +448,13 @@ fn gethostname_required_minus_one_buffer_preserves_existing_data() {
 
   assert_eq!(result, -1);
   assert_eq!(read_errno(), ENAMETOOLONG);
-  assert!(buffer.iter().all(|&byte| byte == 0x41 as c_char));
+  assert_eq!(
+    buffer
+      .iter()
+      .map(|&byte| byte.cast_unsigned())
+      .collect::<Vec<_>>(),
+    nodename,
+  );
 }
 
 #[test]
@@ -506,7 +511,13 @@ fn gethostname_failure_overwrites_errno_with_enametoolong() {
 
   assert_eq!(result, -1);
   assert_eq!(read_errno(), ENAMETOOLONG);
-  assert!(buffer.iter().all(|&byte| byte == 0x66 as c_char));
+  assert_eq!(
+    buffer
+      .iter()
+      .map(|&byte| byte.cast_unsigned())
+      .collect::<Vec<_>>(),
+    nodename,
+  );
 }
 
 #[test]

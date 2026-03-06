@@ -12,7 +12,7 @@
 //! - file metadata C ABI primitives (`stat` family)
 //! - floating-point environment base APIs (`fenv_t`, `fexcept_t`, `fe*`)
 //! - minimal pathname expansion (`glob`, `globfree`)
-//! - minimal stdio formatting subset (`vsnprintf`: literals + `%%/%s/%c/%p/%n` + `%d/%i/%u/%x/%X/%o`, integer length modifiers `hh/h/l/ll/j/t/z`)
+//! - minimal stdio formatting/stream subset (`tmpfile`, `fopen`, `fread`, `fputs`, `fileno`/`fileno_unlocked`, `flockfile` family, `fflush`, `setbuf`/`setbuffer`/`setlinebuf`/`setvbuf`, `vsnprintf`: literals + `%%/%s/%c/%p/%n` + `%d/%i/%u/%x/%X/%o`, integer length modifiers `hh/h/l/ll/j/t/z`)
 //! - minimal locale state (`setlocale` for `C`/`POSIX`)
 //! - minimal netdb name/service resolution (`getaddrinfo`, `freeaddrinfo`, `gai_strerror`, `getnameinfo`)
 //! - non-local jump primitives (`setjmp`, `longjmp`) on `x86_64`
@@ -21,9 +21,9 @@
 //! - signal APIs (`sigset` operations, `sigaction`, `raise`, `kill`, `sigprocmask`)
 //! - socket core interfaces (`socket`, `connect`, `bind`, `listen`, `accept`)
 //! - math errno/fenv integration primitives (`sqrt`, `log`, `exp`)
-//! - stdlib conversion/environment/process primitives
-//! - system-information APIs (`uname`, `gethostname`, `getpagesize`, `sysinfo`, `sysconf`)
-//! - unistd-style interfaces (`open/openat/read/write/send/recv`)
+//! - stdlib allocation/conversion/environment/process primitives
+//! - system-information payload APIs (`uname`, `sysinfo`)
+//! - unistd-style interfaces (`access/close/dup/dup2/dup3/getpid/getppid/getpgid/getpgrp/getsid/gettid/getuid/geteuid/getgid/getegid/isatty/lseek/open/openat/pipe/pipe2/fsync/fdatasync/sync/syncfs/read/write/send/recv/unlink/gethostname/getpagesize/sysconf`, plus related `<unistd.h>` constants)
 //! - restartable/compatibility multibyte conversion primitives (`mbrtowc`, `mbtowc`, `wcstombs`, ...)
 //! - syscall raw return decoding utilities
 
@@ -65,7 +65,7 @@ pub mod signal;
 pub mod socket;
 /// Startup constructor/destructor array traversal helpers.
 pub mod startup;
-/// Minimal stdio formatting entry points.
+/// Minimal stdio formatting and stream entry points.
 pub mod stdio;
 /// C stdlib-related APIs (`strto*`, `atoi*`, env, process termination).
 pub mod stdlib;
@@ -73,11 +73,17 @@ pub mod stdlib;
 pub mod string;
 /// Syscall helper utilities.
 pub mod syscall;
-/// Linux system-information APIs (`uname`, `gethostname`, `getpagesize`, `sysinfo`, `sysconf`).
+/// Linux system-information payload APIs (`uname`, `sysinfo`) and backing
+/// implementations for `<unistd.h>` queries re-exported through [`crate::unistd`].
 pub mod system;
 /// Time-related C ABI interfaces (`clock_gettime`, `gettimeofday`).
 pub mod time;
-/// Unix file I/O C ABI interfaces (`open`, `openat`, `read`, `write`, `send`, `recv`).
+/// Unix file/process I/O C ABI interfaces and `<unistd.h>`-style constants.
+///
+/// Includes `close`, `dup*`, process identity (`getpid`, `getppid`, `getuid`,
+/// `geteuid`, `getgid`, `getegid`), terminal checks (`isatty`),
+/// `gethostname`/`getpagesize`/`sysconf`, and open/pipe/sync/read-write/send/recv
+/// helpers.
 pub mod unistd;
 /// Wide/multibyte conversion interfaces and UTF-8 core state helpers.
 ///

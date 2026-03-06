@@ -1,6 +1,6 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 
-use rlibc::abi::errno::{EBUSY, EDEADLK, EINVAL, ENOTSUP, EPERM};
+use rlibc::abi::errno::{EBUSY, EDEADLK, EINVAL, EPERM};
 use rlibc::errno::__errno_location;
 use rlibc::pthread::{
   PTHREAD_MUTEX_ERRORCHECK, PTHREAD_MUTEX_RECURSIVE, PTHREAD_PROCESS_PRIVATE,
@@ -43,14 +43,20 @@ fn pthread_mutexattr_settype_invalid_returns_einval() {
 }
 
 #[test]
-fn pthread_mutexattr_pshared_shared_returns_enotsup() {
+fn pthread_mutexattr_pshared_shared_round_trips() {
   let mut attr = pthread_mutexattr_t::default();
+  let mut observed_pshared = -1;
 
   assert_eq!(pthread_mutexattr_init(&raw mut attr), 0);
   assert_eq!(
     pthread_mutexattr_setpshared(&raw mut attr, PTHREAD_PROCESS_SHARED),
-    ENOTSUP,
+    0,
   );
+  assert_eq!(
+    pthread_mutexattr_getpshared(&raw const attr, &raw mut observed_pshared),
+    0
+  );
+  assert_eq!(observed_pshared, PTHREAD_PROCESS_SHARED);
   assert_eq!(pthread_mutexattr_destroy(&raw mut attr), 0);
 }
 
@@ -155,14 +161,14 @@ fn pthread_mutex_init_with_uninitialized_attr_preserves_uninitialized_state() {
 }
 
 #[test]
-fn pthread_mutex_init_after_pshared_shared_rejection_uses_private_attr() {
+fn pthread_mutex_init_accepts_pshared_shared_attr() {
   let mut attr = pthread_mutexattr_t::default();
   let mut mutex = pthread_mutex_t::default();
 
   assert_eq!(pthread_mutexattr_init(&raw mut attr), 0);
   assert_eq!(
     pthread_mutexattr_setpshared(&raw mut attr, PTHREAD_PROCESS_SHARED),
-    ENOTSUP
+    0
   );
   assert_eq!(pthread_mutex_init(&raw mut mutex, &raw const attr), 0);
   assert_eq!(pthread_mutex_lock(&raw mut mutex), 0);

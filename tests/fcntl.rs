@@ -12,10 +12,11 @@ use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Mutex, MutexGuard, OnceLock, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static UNIQUE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static CLOSED_FD_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn read_errno() -> c_int {
   // SAFETY: `__errno_location` returns valid thread-local storage for the
@@ -33,6 +34,17 @@ fn write_errno(value: c_int) {
 
 fn as_c_long(value: c_int) -> c_long {
   c_long::from(value)
+}
+
+fn closed_fd_test_lock() -> &'static Mutex<()> {
+  CLOSED_FD_TEST_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_closed_fd_tests() -> MutexGuard<'static, ()> {
+  match closed_fd_test_lock().lock() {
+    Ok(guard) => guard,
+    Err(poisoned) => poisoned.into_inner(),
+  }
 }
 
 fn unique_temp_path() -> PathBuf {
@@ -77,6 +89,7 @@ fn fcntl_getfd_invalid_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_getfd_closed_fd_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -95,6 +108,7 @@ fn fcntl_getfd_closed_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_getfd_closed_fd_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -124,6 +138,7 @@ fn fcntl_setfd_invalid_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_setfd_closed_fd_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -142,6 +157,7 @@ fn fcntl_setfd_closed_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_setfd_closed_fd_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -249,6 +265,7 @@ fn fcntl_getfl_invalid_fd_overwrites_errno_with_ebadf() {
 
 #[test]
 fn fcntl_getfl_closed_fd_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -267,6 +284,7 @@ fn fcntl_getfl_closed_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_getfl_closed_fd_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -307,6 +325,7 @@ fn fcntl_setfl_invalid_fd_overwrites_errno_with_ebadf() {
 
 #[test]
 fn fcntl_setfl_closed_fd_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -325,6 +344,7 @@ fn fcntl_setfl_closed_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_setfl_closed_fd_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -420,6 +440,7 @@ fn fcntl_dupfd_cloexec_invalid_fd_with_excessive_minimum_sets_ebadf() {
 
 #[test]
 fn fcntl_dupfd_cloexec_closed_fd_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -438,6 +459,7 @@ fn fcntl_dupfd_cloexec_closed_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_dupfd_cloexec_closed_fd_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -456,6 +478,7 @@ fn fcntl_dupfd_cloexec_closed_fd_overwrites_errno_with_ebadf() {
 
 #[test]
 fn fcntl_dupfd_cloexec_closed_fd_with_negative_minimum_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -474,6 +497,7 @@ fn fcntl_dupfd_cloexec_closed_fd_with_negative_minimum_sets_ebadf() {
 
 #[test]
 fn fcntl_dupfd_cloexec_closed_fd_with_negative_minimum_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -492,6 +516,7 @@ fn fcntl_dupfd_cloexec_closed_fd_with_negative_minimum_overwrites_errno_with_eba
 
 #[test]
 fn fcntl_dupfd_cloexec_closed_fd_with_excessive_minimum_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -510,6 +535,7 @@ fn fcntl_dupfd_cloexec_closed_fd_with_excessive_minimum_sets_ebadf() {
 
 #[test]
 fn fcntl_dupfd_cloexec_closed_fd_with_excessive_minimum_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -826,6 +852,7 @@ fn fcntl_dupfd_invalid_fd_with_excessive_minimum_overwrites_errno_with_ebadf() {
 
 #[test]
 fn fcntl_dupfd_closed_fd_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -845,6 +872,7 @@ fn fcntl_dupfd_closed_fd_sets_ebadf() {
 
 #[test]
 fn fcntl_dupfd_closed_fd_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -864,6 +892,7 @@ fn fcntl_dupfd_closed_fd_overwrites_errno_with_ebadf() {
 
 #[test]
 fn fcntl_dupfd_closed_fd_with_negative_minimum_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -883,6 +912,7 @@ fn fcntl_dupfd_closed_fd_with_negative_minimum_sets_ebadf() {
 
 #[test]
 fn fcntl_dupfd_closed_fd_with_negative_minimum_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -902,6 +932,7 @@ fn fcntl_dupfd_closed_fd_with_negative_minimum_overwrites_errno_with_ebadf() {
 
 #[test]
 fn fcntl_dupfd_closed_fd_with_excessive_minimum_sets_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 
@@ -921,6 +952,7 @@ fn fcntl_dupfd_closed_fd_with_excessive_minimum_sets_ebadf() {
 
 #[test]
 fn fcntl_dupfd_closed_fd_with_excessive_minimum_overwrites_errno_with_ebadf() {
+  let _fd_lock = lock_closed_fd_tests();
   let (path, file) = create_read_only_temp_file(b"x");
   let closed_fd = file.as_raw_fd();
 

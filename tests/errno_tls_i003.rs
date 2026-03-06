@@ -2,12 +2,21 @@
 
 use core::ffi::c_int;
 use rlibc::errno::__errno_location;
-use std::sync::{Arc, Barrier, mpsc};
+use std::sync::{Arc, Barrier, Mutex, MutexGuard, OnceLock, mpsc};
 use std::thread;
 
 type NestedThreadSample = (usize, c_int, c_int);
 
 type ParentThreadSample = (usize, c_int, c_int, NestedThreadSample);
+
+fn errno_tls_test_lock() -> MutexGuard<'static, ()> {
+  static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+  LOCK
+    .get_or_init(|| Mutex::new(()))
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn write_errno(value: c_int) {
   // SAFETY: `__errno_location` returns writable thread-local storage for the calling thread.
@@ -27,6 +36,8 @@ fn usize_to_i32(value: usize) -> i32 {
 
 #[test]
 fn errno_location_storage_isolated_across_simultaneous_threads() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(111);
 
   let main_addr = __errno_location() as usize;
@@ -103,6 +114,8 @@ fn errno_location_storage_isolated_across_simultaneous_threads() {
 
 #[test]
 fn errno_location_pointer_remains_stable_after_child_thread_activity() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(515);
 
   let main_before = __errno_location() as usize;
@@ -132,6 +145,8 @@ fn errno_location_pointer_remains_stable_after_child_thread_activity() {
 
 #[test]
 fn new_thread_starts_with_zero_errno_after_previous_thread_exit() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(909);
 
   let first_child_errno = thread::spawn(|| {
@@ -162,6 +177,8 @@ fn new_thread_starts_with_zero_errno_after_previous_thread_exit() {
 
 #[test]
 fn main_errno_and_pointer_stay_stable_across_many_child_threads() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(707);
 
   let main_addr = __errno_location() as usize;
@@ -200,6 +217,7 @@ fn main_errno_and_pointer_stay_stable_across_many_child_threads() {
 #[test]
 fn simultaneous_many_threads_keep_distinct_errno_storage_and_values() {
   const CHILD_COUNT: usize = 6;
+  let _serial = errno_tls_test_lock();
 
   write_errno(606);
 
@@ -285,6 +303,8 @@ fn simultaneous_many_threads_keep_distinct_errno_storage_and_values() {
 
 #[test]
 fn sequential_child_threads_start_at_zero_and_do_not_clobber_main_errno() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(5150);
 
   let main_addr = __errno_location() as usize;
@@ -334,6 +354,8 @@ fn sequential_child_threads_start_at_zero_and_do_not_clobber_main_errno() {
 
 #[test]
 fn child_errno_pointer_stays_stable_while_main_errno_changes() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(808);
 
   let main_addr = __errno_location() as usize;
@@ -405,6 +427,7 @@ fn child_errno_pointer_stays_stable_while_main_errno_changes() {
 #[test]
 fn simultaneous_children_keep_stable_errno_pointer_within_each_thread() {
   const CHILD_COUNT: usize = 4;
+  let _serial = errno_tls_test_lock();
 
   write_errno(333);
 
@@ -493,6 +516,7 @@ fn simultaneous_children_keep_stable_errno_pointer_within_each_thread() {
 fn errno_tls_regression_monitor_over_repeated_rounds() {
   const ROUNDS: usize = 12;
   const CHILD_COUNT: usize = 3;
+  let _serial = errno_tls_test_lock();
 
   write_errno(4242);
 
@@ -587,6 +611,7 @@ fn errno_tls_regression_monitor_over_repeated_rounds() {
 
 #[test]
 fn errno_tls_regression_monitor_with_alternating_main_values() {
+  let _serial = errno_tls_test_lock();
   let main_addr = __errno_location() as usize;
   let main_values = [-37, 0, 12, -91, 2048, -2048, 77];
 
@@ -632,6 +657,8 @@ fn errno_tls_regression_monitor_with_alternating_main_values() {
 
 #[test]
 fn child_errno_stays_zero_until_child_write_despite_main_updates() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(11);
 
   let main_addr = __errno_location() as usize;
@@ -703,6 +730,8 @@ fn child_errno_stays_zero_until_child_write_despite_main_updates() {
 
 #[test]
 fn new_child_starts_zero_while_another_child_holds_nonzero_errno() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(300);
 
   let main_addr = __errno_location() as usize;
@@ -784,6 +813,8 @@ fn new_child_starts_zero_while_another_child_holds_nonzero_errno() {
 
 #[test]
 fn next_child_starts_zero_after_live_child_and_main_updates() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(600);
 
   let main_addr = __errno_location() as usize;
@@ -867,6 +898,7 @@ fn next_child_starts_zero_after_live_child_and_main_updates() {
 #[test]
 fn main_and_child_errno_stay_isolated_across_interleaved_rounds() {
   const ROUNDS: usize = 5;
+  let _serial = errno_tls_test_lock();
 
   write_errno(700);
 
@@ -964,6 +996,7 @@ fn main_and_child_errno_stay_isolated_across_interleaved_rounds() {
 #[test]
 fn two_children_and_main_remain_isolated_across_interleaved_rounds() {
   const ROUNDS: usize = 4;
+  let _serial = errno_tls_test_lock();
 
   write_errno(8080);
 
@@ -1096,6 +1129,7 @@ fn two_children_and_main_remain_isolated_across_interleaved_rounds() {
 
 #[test]
 fn child_tls_storage_reuse_does_not_leak_errno_values() {
+  let _serial = errno_tls_test_lock();
   let main_addr = __errno_location() as usize;
 
   for round in 0..16_i32 {
@@ -1153,6 +1187,8 @@ fn child_tls_storage_reuse_does_not_leak_errno_values() {
 
 #[test]
 fn new_child_starts_zero_after_two_live_children_exit() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(910);
 
   let main_addr = __errno_location() as usize;
@@ -1239,6 +1275,7 @@ fn new_child_starts_zero_after_two_live_children_exit() {
 #[test]
 fn child_pointer_stays_stable_across_interleaved_main_updates() {
   const ROUNDS: usize = 6;
+  let _serial = errno_tls_test_lock();
 
   write_errno(444);
 
@@ -1362,6 +1399,7 @@ fn child_pointer_stays_stable_across_interleaved_main_updates() {
 
 #[test]
 fn child_zero_start_persists_across_repeated_multi_child_generations() {
+  let _serial = errno_tls_test_lock();
   let main_addr = __errno_location() as usize;
 
   for round in 0..10_i32 {
@@ -1466,6 +1504,8 @@ fn child_zero_start_persists_across_repeated_multi_child_generations() {
 
 #[test]
 fn boundary_errno_values_do_not_leak_across_live_children_and_next_spawn() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(-1);
 
   let main_addr = __errno_location() as usize;
@@ -1568,6 +1608,8 @@ fn boundary_errno_values_do_not_leak_across_live_children_and_next_spawn() {
 
 #[test]
 fn zero_reset_in_main_does_not_leak_into_live_children_or_next_child_start() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(123);
 
   let main_addr = __errno_location() as usize;
@@ -1655,6 +1697,8 @@ fn zero_reset_in_main_does_not_leak_into_live_children_or_next_child_start() {
 
 #[test]
 fn grandchild_thread_starts_zero_and_stays_isolated_from_parent_and_main() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(1212);
 
   let main_storage = __errno_location() as usize;
@@ -1730,6 +1774,8 @@ fn grandchild_thread_starts_zero_and_stays_isolated_from_parent_and_main() {
 
 #[test]
 fn sequential_grandchildren_from_same_parent_start_zero_each_time() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(2020);
 
   let main_storage = __errno_location() as usize;
@@ -1846,6 +1892,8 @@ fn sequential_grandchildren_from_same_parent_start_zero_each_time() {
 
 #[test]
 fn concurrent_grandchildren_from_same_parent_do_not_clobber_parent_or_main_errno() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(-6060);
 
   let main_storage = __errno_location() as usize;
@@ -1994,6 +2042,8 @@ fn concurrent_grandchildren_from_same_parent_do_not_clobber_parent_or_main_errno
 
 #[test]
 fn new_grandchild_after_concurrent_grandchildren_starts_zero() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(9090);
 
   let main_storage = __errno_location() as usize;
@@ -2135,6 +2185,8 @@ fn new_grandchild_after_concurrent_grandchildren_starts_zero() {
 
 #[test]
 fn sibling_parent_trees_keep_errno_isolation_across_nested_threads() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(1313);
 
   let main_storage = __errno_location() as usize;
@@ -2279,6 +2331,8 @@ fn sibling_parent_trees_keep_errno_isolation_across_nested_threads() {
 
 #[test]
 fn child_starts_zero_after_sibling_parent_trees_exit() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(-4040);
 
   let main_storage = __errno_location() as usize;
@@ -2419,6 +2473,8 @@ fn child_starts_zero_after_sibling_parent_trees_exit() {
 
 #[test]
 fn nested_child_starts_zero_after_main_updates_before_spawn() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(1717);
 
   let main_storage = __errno_location() as usize;
@@ -2535,6 +2591,8 @@ fn nested_child_starts_zero_after_main_updates_before_spawn() {
 
 #[test]
 fn nested_boundary_errno_values_stay_isolated_from_parent_and_main() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(c_int::MAX - 1);
 
   let main_storage = __errno_location() as usize;
@@ -2631,6 +2689,7 @@ fn nested_boundary_errno_values_stay_isolated_from_parent_and_main() {
 
 #[test]
 fn repeated_nested_rounds_keep_nested_and_fresh_child_zero_start() {
+  let _serial = errno_tls_test_lock();
   let main_storage = __errno_location() as usize;
 
   for round in 0..6_i32 {
@@ -2728,6 +2787,7 @@ fn repeated_nested_rounds_keep_nested_and_fresh_child_zero_start() {
 #[test]
 fn nested_thread_pointer_remains_stable_across_repeated_writes() {
   const REPEATS: usize = 5;
+  let _serial = errno_tls_test_lock();
 
   write_errno(-111);
 
@@ -2845,6 +2905,8 @@ fn nested_thread_pointer_remains_stable_across_repeated_writes() {
 
 #[test]
 fn three_level_nested_threads_keep_errno_zero_start_and_isolation() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(77);
 
   let main_slot = __errno_location() as usize;
@@ -2937,6 +2999,7 @@ fn three_level_nested_threads_keep_errno_zero_start_and_isolation() {
 fn three_level_leaf_pointer_stays_stable_across_repeated_writes() {
   const REPEATS: usize = 6;
   const LEAF_START: c_int = 6100;
+  let _serial = errno_tls_test_lock();
 
   write_errno(-8181);
 
@@ -3081,6 +3144,8 @@ fn three_level_leaf_pointer_stays_stable_across_repeated_writes() {
 
 #[test]
 fn three_level_second_leaf_starts_zero_after_first_leaf_exit() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(9292);
 
   let main_slot = __errno_location() as usize;
@@ -3221,6 +3286,7 @@ fn three_level_second_leaf_starts_zero_after_first_leaf_exit() {
 fn three_level_many_sequential_leaves_start_zero_and_keep_isolation() {
   const LEAF_COUNT: usize = 5;
   const LEAF_BASE: c_int = 5300;
+  let _serial = errno_tls_test_lock();
 
   write_errno(-9191);
 
@@ -3341,6 +3407,8 @@ fn three_level_many_sequential_leaves_start_zero_and_keep_isolation() {
 
 #[test]
 fn three_level_second_branch_starts_zero_after_first_branch_exit() {
+  let _serial = errno_tls_test_lock();
+
   write_errno(8181);
 
   let main_slot = __errno_location() as usize;
@@ -3540,6 +3608,7 @@ fn three_level_branch_regeneration_keeps_boundary_writes_isolated() {
   const FIRST_LEAF_WRITE: c_int = c_int::MAX - 29;
   const SECOND_BRANCH_WRITE: c_int = c_int::MAX - 55;
   const SECOND_LEAF_WRITE: c_int = c_int::MIN + 57;
+  let _serial = errno_tls_test_lock();
 
   write_errno(-9000);
 
@@ -3740,6 +3809,7 @@ fn three_level_many_branch_generations_start_zero_and_preserve_trunk_errno() {
   const BRANCH_TARGETS: [c_int; 4] = [8100, 8101, 8102, 8103];
   const LEAF_TARGETS: [c_int; 4] = [-9100, -9101, -9102, -9103];
   const TRUNK_WRITE: c_int = 5150;
+  let _serial = errno_tls_test_lock();
 
   write_errno(6060);
 
@@ -3892,6 +3962,7 @@ fn three_level_branch_rounds_keep_zero_start_after_trunk_rewrites() {
     (5003, 6103, 7103),
     (-5004, -6104, -7104),
   ];
+  let _serial = errno_tls_test_lock();
 
   write_errno(MAIN_ERRNO);
 

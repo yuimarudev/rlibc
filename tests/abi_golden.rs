@@ -5,6 +5,37 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs, process};
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+const STDIO_GOLDEN_SYMBOLS: [&str; 20] = [
+  "fclose",
+  "fflush",
+  "fileno",
+  "fileno_unlocked",
+  "flockfile",
+  "fopen",
+  "fprintf",
+  "fputs",
+  "fread",
+  "ftrylockfile",
+  "funlockfile",
+  "printf",
+  "setbuf",
+  "setbuffer",
+  "setlinebuf",
+  "setvbuf",
+  "tmpfile",
+  "vfprintf",
+  "vprintf",
+  "vsnprintf",
+];
+const FLOCKFILE_FAMILY_SYMBOLS: [&str; 3] = ["flockfile", "ftrylockfile", "funlockfile"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DynamicSymbol {
+  raw_name: String,
+  base_name: String,
+  version: Option<String>,
+  kind: char,
+}
 
 fn repository_file(path: &str) -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path)
@@ -148,28 +179,64 @@ fn parse_golden_symbol_lines(snapshot: &str) -> Vec<String> {
   symbols
 }
 
+fn assert_golden_snapshot_contains_symbols(
+  golden_symbols: &BTreeSet<String>,
+  category: &str,
+  required_symbols: &[&str],
+) {
+  let missing_symbols = required_symbols
+    .iter()
+    .copied()
+    .filter(|symbol| !golden_symbols.contains(*symbol))
+    .collect::<Vec<_>>();
+
+  assert!(
+    missing_symbols.is_empty(),
+    "golden snapshot must pin current {category} exports: missing {missing_symbols:?}",
+  );
+}
+
+fn parse_nm_dynamic_symbol(line: &str) -> Option<DynamicSymbol> {
+  let mut fields = line.split_whitespace();
+  let raw_name = fields.next()?;
+
+  if raw_name.ends_with(':') {
+    return None;
+  }
+
+  let kind = fields.next()?.chars().next()?;
+  let (base_name, version) = if let Some((base_name, version)) = raw_name.split_once("@@") {
+    (base_name.to_string(), Some(version.to_string()))
+  } else if let Some((base_name, version)) = raw_name.split_once('@') {
+    (base_name.to_string(), Some(version.to_string()))
+  } else {
+    (raw_name.to_string(), None)
+  };
+
+  if base_name.is_empty() {
+    return None;
+  }
+
+  Some(DynamicSymbol {
+    raw_name: raw_name.to_string(),
+    base_name,
+    version,
+    kind,
+  })
+}
+
+fn parse_nm_dynamic_symbol_entries(output: &str) -> Vec<DynamicSymbol> {
+  output.lines().filter_map(parse_nm_dynamic_symbol).collect()
+}
+
 fn parse_nm_dynamic_symbols(output: &str) -> BTreeSet<String> {
-  output
-    .lines()
-    .filter_map(|line| {
-      let symbol = line.split_whitespace().next()?;
-
-      if symbol.ends_with(':') {
-        return None;
-      }
-
-      let base = symbol.split('@').next().unwrap_or(symbol);
-
-      if base.is_empty() {
-        return None;
-      }
-
-      Some(base.to_string())
-    })
+  parse_nm_dynamic_symbol_entries(output)
+    .into_iter()
+    .map(|symbol| symbol.base_name)
     .collect()
 }
 
-fn read_cdylib_dynamic_symbols(library_path: &PathBuf) -> BTreeSet<String> {
+fn read_nm_dynamic_symbols_output(library_path: &PathBuf) -> String {
   let output = Command::new("nm")
     .arg("--dynamic")
     .arg("--defined-only")
@@ -190,7 +257,26 @@ fn read_cdylib_dynamic_symbols(library_path: &PathBuf) -> BTreeSet<String> {
     stderr,
   );
 
-  parse_nm_dynamic_symbols(&stdout)
+  stdout.into_owned()
+}
+
+fn read_cdylib_dynamic_symbol_entries(library_path: &PathBuf) -> Vec<DynamicSymbol> {
+  parse_nm_dynamic_symbol_entries(&read_nm_dynamic_symbols_output(library_path))
+}
+
+fn read_cdylib_dynamic_symbols(library_path: &PathBuf) -> BTreeSet<String> {
+  parse_nm_dynamic_symbols(&read_nm_dynamic_symbols_output(library_path))
+}
+
+const fn nm_symbol_kind_is_object(kind: char) -> bool {
+  matches!(
+    kind,
+    'B' | 'b' | 'D' | 'd' | 'G' | 'g' | 'R' | 'r' | 'S' | 's' | 'V' | 'v'
+  )
+}
+
+const fn nm_symbol_kind_is_text(kind: char) -> bool {
+  matches!(kind, 'T' | 't' | 'W' | 'w' | 'I' | 'i')
 }
 
 #[test]
@@ -216,6 +302,202 @@ fn golden_snapshot_symbols_match_version_script_global_exports() {
 }
 
 #[test]
+fn golden_snapshot_pins_unistd_exports() {
+  let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+    .expect("failed to read golden abi snapshot");
+  let (_class, _machine, golden_symbols) = parse_golden_snapshot(&snapshot);
+  let missing_symbols = [
+    "access",
+    "close",
+    "dup",
+    "dup2",
+    "dup3",
+    "fdatasync",
+    "fsync",
+    "getegid",
+    "geteuid",
+    "getgid",
+    "gethostname",
+    "getpagesize",
+    "getpgid",
+    "getpgrp",
+    "getpid",
+    "getppid",
+    "getsid",
+    "gettid",
+    "getuid",
+    "isatty",
+    "lseek",
+    "open",
+    "openat",
+    "pipe",
+    "pipe2",
+    "read",
+    "recv",
+    "send",
+    "sync",
+    "syncfs",
+    "sysconf",
+    "unlink",
+    "write",
+  ]
+  .into_iter()
+  .filter(|symbol| !golden_symbols.contains(*symbol))
+  .collect::<Vec<_>>();
+
+  assert!(
+    missing_symbols.is_empty(),
+    "golden snapshot must pin current unistd exports: missing {missing_symbols:?}",
+  );
+}
+
+#[test]
+fn golden_snapshot_pins_glibc_runtime_loader_and_environment_exports() {
+  let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+    .expect("failed to read golden abi snapshot");
+  let (_class, _machine, golden_symbols) = parse_golden_snapshot(&snapshot);
+
+  assert_golden_snapshot_contains_symbols(
+    &golden_symbols,
+    "glibc runtime/loader/environment",
+    &[
+      "_Exit",
+      "__errno_location",
+      "__libc_start_main",
+      "abort",
+      "atexit",
+      "clearenv",
+      "dlclose",
+      "dlerror",
+      "dlopen",
+      "dlsym",
+      "environ",
+      "exit",
+      "getenv",
+      "putenv",
+      "setenv",
+      "unsetenv",
+    ],
+  );
+}
+
+#[test]
+fn golden_snapshot_pins_stdlib_allocator_exports() {
+  let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+    .expect("failed to read golden abi snapshot");
+  let (_class, _machine, golden_symbols) = parse_golden_snapshot(&snapshot);
+
+  assert_golden_snapshot_contains_symbols(
+    &golden_symbols,
+    "stdlib allocator",
+    &[
+      "aligned_alloc",
+      "calloc",
+      "cfree",
+      "free",
+      "malloc",
+      "malloc_usable_size",
+      "memalign",
+      "posix_memalign",
+      "pvalloc",
+      "realloc",
+      "reallocarray",
+      "valloc",
+    ],
+  );
+}
+
+#[test]
+fn golden_snapshot_pins_pthread_exports() {
+  let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+    .expect("failed to read golden abi snapshot");
+  let (_class, _machine, golden_symbols) = parse_golden_snapshot(&snapshot);
+
+  assert_golden_snapshot_contains_symbols(
+    &golden_symbols,
+    "pthread",
+    &[
+      "pthread_cond_broadcast",
+      "pthread_cond_destroy",
+      "pthread_cond_init",
+      "pthread_cond_signal",
+      "pthread_cond_timedwait",
+      "pthread_cond_wait",
+      "pthread_condattr_destroy",
+      "pthread_condattr_getpshared",
+      "pthread_condattr_init",
+      "pthread_condattr_setpshared",
+      "pthread_create",
+      "pthread_detach",
+      "pthread_join",
+      "pthread_mutex_destroy",
+      "pthread_mutex_init",
+      "pthread_mutex_lock",
+      "pthread_mutex_trylock",
+      "pthread_mutex_unlock",
+      "pthread_mutexattr_destroy",
+      "pthread_mutexattr_getpshared",
+      "pthread_mutexattr_gettype",
+      "pthread_mutexattr_init",
+      "pthread_mutexattr_setpshared",
+      "pthread_mutexattr_settype",
+      "pthread_rwlock_destroy",
+      "pthread_rwlock_init",
+      "pthread_rwlock_rdlock",
+      "pthread_rwlock_tryrdlock",
+      "pthread_rwlock_trywrlock",
+      "pthread_rwlock_unlock",
+      "pthread_rwlock_wrlock",
+    ],
+  );
+}
+
+#[test]
+fn golden_snapshot_pins_network_and_name_service_exports() {
+  let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+    .expect("failed to read golden abi snapshot");
+  let (_class, _machine, golden_symbols) = parse_golden_snapshot(&snapshot);
+
+  assert_golden_snapshot_contains_symbols(
+    &golden_symbols,
+    "network/socket/name-service",
+    &[
+      "accept",
+      "bind",
+      "connect",
+      "freeaddrinfo",
+      "gai_strerror",
+      "getaddrinfo",
+      "getnameinfo",
+      "listen",
+      "socket",
+    ],
+  );
+}
+
+#[test]
+fn golden_snapshot_pins_stdio_exports_in_sorted_order() {
+  let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+    .expect("failed to read golden abi snapshot");
+  let (_class, _machine, golden_symbols) = parse_golden_snapshot(&snapshot);
+  let stdio_symbols_in_file = parse_golden_symbol_lines(&snapshot)
+    .into_iter()
+    .filter(|symbol| STDIO_GOLDEN_SYMBOLS.contains(&symbol.as_str()))
+    .collect::<Vec<_>>();
+  let expected_stdio_symbols = STDIO_GOLDEN_SYMBOLS
+    .iter()
+    .copied()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+
+  assert_golden_snapshot_contains_symbols(&golden_symbols, "stdio", &STDIO_GOLDEN_SYMBOLS);
+  assert_eq!(
+    stdio_symbols_in_file, expected_stdio_symbols,
+    "golden snapshot must keep stdio exports, including the flockfile family, in sorted order for stable ABI review",
+  );
+}
+
+#[test]
 fn release_cdylib_dynamic_exports_match_golden_snapshot() {
   let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
     .expect("failed to read golden abi snapshot");
@@ -229,6 +511,119 @@ fn release_cdylib_dynamic_exports_match_golden_snapshot() {
   assert_eq!(
     exported_symbols, golden_symbols,
     "release cdylib dynamic exports must match ABI golden snapshot"
+  );
+}
+
+#[test]
+fn release_cdylib_dynamic_exports_are_default_versioned_under_rlibc_0_1() {
+  let snapshot = fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
+    .expect("failed to read golden abi snapshot");
+  let (_class, _machine, golden_symbols) = parse_golden_snapshot(&snapshot);
+  let library_path = repository_file("target/release/librlibc.so");
+
+  build_release_cdylib();
+
+  let exported_symbols = read_cdylib_dynamic_symbol_entries(&library_path);
+  let unexpected_exports = exported_symbols
+    .iter()
+    .filter(|symbol| {
+      symbol.version.as_deref() != Some("RLIBC_0.1") || !symbol.raw_name.ends_with("@@RLIBC_0.1")
+    })
+    .map(|symbol| symbol.raw_name.clone())
+    .collect::<Vec<_>>();
+
+  assert_eq!(
+    exported_symbols.len(),
+    golden_symbols.len(),
+    "release cdylib should expose exactly one versioned dynamic symbol entry per golden symbol",
+  );
+  assert!(
+    unexpected_exports.is_empty(),
+    "release cdylib dynamic exports must use the default `@@RLIBC_0.1` version namespace: unexpected {unexpected_exports:?}",
+  );
+}
+
+#[test]
+fn release_cdylib_dynamic_flockfile_exports_are_default_versioned_under_rlibc_0_1() {
+  let library_path = repository_file("target/release/librlibc.so");
+
+  build_release_cdylib();
+
+  let mut flockfile_family_symbols = read_cdylib_dynamic_symbol_entries(&library_path)
+    .into_iter()
+    .filter(|symbol| FLOCKFILE_FAMILY_SYMBOLS.contains(&symbol.base_name.as_str()))
+    .collect::<Vec<_>>();
+  let expected_flockfile_family = FLOCKFILE_FAMILY_SYMBOLS
+    .iter()
+    .copied()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+
+  flockfile_family_symbols.sort_unstable_by(|left, right| left.base_name.cmp(&right.base_name));
+
+  let exported_flockfile_family = flockfile_family_symbols
+    .iter()
+    .map(|symbol| symbol.base_name.clone())
+    .collect::<Vec<_>>();
+
+  assert_eq!(
+    flockfile_family_symbols.len(),
+    FLOCKFILE_FAMILY_SYMBOLS.len(),
+    "release cdylib must export exactly the flockfile family symbols once each",
+  );
+  assert_eq!(
+    exported_flockfile_family, expected_flockfile_family,
+    "release cdylib must keep the flockfile family in the expected public ABI set",
+  );
+
+  for symbol in flockfile_family_symbols {
+    let expected_raw_name = format!("{}@@RLIBC_0.1", symbol.base_name);
+
+    assert_eq!(
+      symbol.version.as_deref(),
+      Some("RLIBC_0.1"),
+      "release cdylib must default-version {} under RLIBC_0.1",
+      symbol.base_name,
+    );
+    assert_eq!(
+      symbol.raw_name, expected_raw_name,
+      "release cdylib must expose {} as the default-versioned symbol",
+      symbol.base_name,
+    );
+    assert!(
+      nm_symbol_kind_is_text(symbol.kind),
+      "release cdylib must keep {} as a callable text export, found kind `{}`",
+      symbol.base_name,
+      symbol.kind,
+    );
+  }
+}
+
+#[test]
+fn release_cdylib_dynamic_exports_preserve_function_vs_object_symbol_kinds() {
+  let library_path = repository_file("target/release/librlibc.so");
+
+  build_release_cdylib();
+
+  let exported_symbols = read_cdylib_dynamic_symbol_entries(&library_path);
+  let environ_symbol = exported_symbols
+    .iter()
+    .find(|symbol| symbol.base_name == "environ")
+    .unwrap_or_else(|| panic!("release cdylib must export `environ` as part of the public ABI"));
+  let non_text_function_exports = exported_symbols
+    .iter()
+    .filter(|symbol| symbol.base_name != "environ" && !nm_symbol_kind_is_text(symbol.kind))
+    .map(|symbol| format!("{} ({})", symbol.base_name, symbol.kind))
+    .collect::<Vec<_>>();
+
+  assert!(
+    nm_symbol_kind_is_object(environ_symbol.kind),
+    "release cdylib must keep `environ` as a data/object export, found kind `{}`",
+    environ_symbol.kind,
+  );
+  assert!(
+    non_text_function_exports.is_empty(),
+    "release cdylib must keep non-`environ` public exports as callable text symbols: unexpected {non_text_function_exports:?}",
   );
 }
 
@@ -1102,6 +1497,7 @@ fn abi_check_binary_accepts_symbols_line_with_carriage_return_suffix_in_golden_s
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
   let snapshot_path = unique_temp_snapshot_path("symbols-line-carriage-return-suffix");
   let base_snapshot =
     fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
@@ -1111,9 +1507,12 @@ fn abi_check_binary_accepts_symbols_line_with_carriage_return_suffix_in_golden_s
   fs::write(&snapshot_path, snapshot_contents)
     .expect("symbols-line-carriage-return-suffix golden snapshot fixture write must succeed");
 
+  build_release_cdylib();
+
   let output = Command::new(&abi_check_path)
     .arg("--golden")
     .arg(&snapshot_path)
+    .arg(&library_path)
     .current_dir(repository_file("."))
     .output()
     .expect("failed to execute abi_check binary");
@@ -2531,6 +2930,7 @@ fn abi_check_binary_accepts_magic_header_with_carriage_return_suffix_in_golden_s
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
   let snapshot_path = unique_temp_snapshot_path("magic-header-carriage-return-suffix");
   let base_snapshot =
     fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
@@ -2543,9 +2943,12 @@ fn abi_check_binary_accepts_magic_header_with_carriage_return_suffix_in_golden_s
   fs::write(&snapshot_path, snapshot_contents)
     .expect("magic-header-carriage-return-suffix golden snapshot fixture write must succeed");
 
+  build_release_cdylib();
+
   let output = Command::new(&abi_check_path)
     .arg("--golden")
     .arg(&snapshot_path)
+    .arg(&library_path)
     .current_dir(repository_file("."))
     .output()
     .expect("failed to execute abi_check binary");
@@ -2571,6 +2974,7 @@ fn abi_check_binary_accepts_snapshot_with_all_crlf_line_endings() {
   let abi_check_path = std::env::var_os("CARGO_BIN_EXE_abi_check")
     .map(PathBuf::from)
     .expect("cargo must provide CARGO_BIN_EXE_abi_check for integration tests");
+  let library_path = repository_file("target/release/librlibc.so");
   let snapshot_path = unique_temp_snapshot_path("full-crlf-line-endings");
   let base_snapshot =
     fs::read_to_string(repository_file("abi/golden/x86_64-unknown-linux-gnu.abi"))
@@ -2580,9 +2984,12 @@ fn abi_check_binary_accepts_snapshot_with_all_crlf_line_endings() {
   fs::write(&snapshot_path, snapshot_contents)
     .expect("full-crlf-line-endings golden snapshot fixture write must succeed");
 
+  build_release_cdylib();
+
   let output = Command::new(&abi_check_path)
     .arg("--golden")
     .arg(&snapshot_path)
+    .arg(&library_path)
     .current_dir(repository_file("."))
     .output()
     .expect("failed to execute abi_check binary");

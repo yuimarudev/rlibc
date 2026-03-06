@@ -445,7 +445,7 @@ fn fegetexceptflag_success_preserves_errno() {
     unsafe { fegetexceptflag(&raw mut snapshot, FE_DIVBYZERO | FE_INEXACT) },
     0
   );
-  assert_eq!(snapshot, (FE_DIVBYZERO | FE_INEXACT) as fexcept_t);
+  assert_eq!(snapshot, to_fexcept(FE_DIVBYZERO | FE_INEXACT));
   assert_eq!(fetestexcept(FE_ALL_EXCEPT), FE_DIVBYZERO | FE_INEXACT);
   assert_eq!(read_errno(), 69);
 

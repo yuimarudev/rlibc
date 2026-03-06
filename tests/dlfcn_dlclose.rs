@@ -213,6 +213,69 @@ fn dlclose_success_preserves_errno_and_keeps_dlerror_empty() {
 }
 
 #[test]
+fn dlclose_main_program_handle_from_dlopen_null_preserves_errno_and_dlerror_empty() {
+  clear_pending_dlerror();
+
+  // SAFETY: null filename requests the main-program loader handle.
+  let handle = unsafe { dlopen(core::ptr::null(), RTLD_NOW) };
+
+  assert!(!handle.is_null(), "main-program handle should resolve");
+
+  write_errno(9192);
+
+  assert_eq!(
+    dlclose(handle),
+    0,
+    "main-program handle close should succeed"
+  );
+  assert_eq!(read_errno(), 9192, "successful dlclose must preserve errno");
+  assert!(
+    take_dlerror_message().is_none(),
+    "successful dlclose should not leave pending dlerror",
+  );
+}
+
+#[test]
+fn dlclose_second_close_for_main_program_handle_reports_closed_handle_error() {
+  clear_pending_dlerror();
+
+  // SAFETY: null filename requests the main-program loader handle.
+  let handle = unsafe { dlopen(core::ptr::null(), RTLD_NOW) };
+
+  assert!(!handle.is_null(), "main-program handle should resolve");
+  assert_eq!(
+    dlclose(handle),
+    0,
+    "first main-program handle close should succeed"
+  );
+
+  write_errno(9293);
+
+  assert_eq!(dlclose(handle), -1, "second close should fail");
+  assert_eq!(
+    read_errno(),
+    9293,
+    "closed main-program-handle failure must preserve errno",
+  );
+
+  let message = take_dlerror_message()
+    .expect("closed main-program handle should report a pending dlerror message");
+
+  assert!(
+    message.contains("already closed"),
+    "closed main-program handle must report closed-handle error: {message}",
+  );
+  assert!(
+    !message.contains("invalid dynamic-loader handle"),
+    "closed main-program handle must not regress to invalid-handle reporting: {message}",
+  );
+  assert!(
+    take_dlerror_message().is_none(),
+    "second dlerror call should clear pending state",
+  );
+}
+
+#[test]
 fn dlclose_does_not_invalidate_symbol_pointer_in_refcount_only_phase() {
   clear_pending_dlerror();
 

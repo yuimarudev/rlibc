@@ -13,42 +13,200 @@
 use crate::abi::errno::EINVAL;
 use crate::abi::types::c_int;
 use crate::errno::__errno_location;
-use core::ffi::{c_char, c_void};
+use crate::stdlib::env_core::environ;
+use core::ffi::c_char;
+#[cfg(test)]
+use core::ffi::c_void;
+#[cfg(test)]
 use core::mem;
+use core::ptr;
 #[cfg(test)]
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::ffi::{CStr, CString};
+#[cfg(test)]
 use std::io;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 #[cfg(test)]
 use std::sync::TryLockError;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 static ENV_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static PUTENV_ALIASES: OnceLock<Mutex<Vec<PutEnvAlias>>> = OnceLock::new();
+static OWNED_ENV: OnceLock<Mutex<OwnedEnviron>> = OnceLock::new();
+#[cfg(test)]
+static HOST_GETENV_FALLBACK: OnceLock<Option<HostGetenvFn>> = OnceLock::new();
+#[cfg(test)]
 static HOST_ENV_FNS: OnceLock<Option<HostEnvFns>> = OnceLock::new();
 #[cfg(test)]
 static FORCE_HOST_ENV_UNAVAILABLE_FOR_TEST: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
 const RTLD_NEXT: *mut c_void = (-1_isize) as *mut c_void;
+#[cfg(test)]
+const GLIBC_DLSYM_VERSION_CANDIDATES: [&[u8]; 2] = [b"GLIBC_2.34\0", b"GLIBC_2.2.5\0"];
+#[cfg(test)]
 const SYMBOL_GETENV: &[u8] = b"getenv\0";
+#[cfg(test)]
 const SYMBOL_SETENV: &[u8] = b"setenv\0";
+#[cfg(test)]
 const SYMBOL_UNSETENV: &[u8] = b"unsetenv\0";
-const SYMBOL_CLEARENV: &[u8] = b"clearenv\0";
 
+#[cfg(test)]
 unsafe extern "C" {
   fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
+
+#[cfg(test)]
+#[link(name = "dl")]
+unsafe extern "C" {
+  #[link_name = "dlvsym"]
+  fn host_dlvsym(handle: *mut c_void, symbol: *const c_char, version: *const c_char)
+  -> *mut c_void;
+}
+
+#[cfg(test)]
+type HostGetenvFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 
 struct PutEnvAlias {
   name: Box<[u8]>,
   entry_addr: usize,
 }
 
+struct OwnedEnviron {
+  initialized: bool,
+  entries: Vec<CString>,
+  pointers: Vec<*mut c_char>,
+}
+
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct HostEnvFns {
-  getenv: unsafe extern "C" fn(*const c_char) -> *mut c_char,
   setenv: unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> c_int,
   unsetenv: unsafe extern "C" fn(*const c_char) -> c_int,
-  clearenv: unsafe extern "C" fn() -> c_int,
+}
+
+// SAFETY: Access to `OwnedEnviron` is serialized behind `OWNED_ENV` and the
+// process-wide environment mutation lock; pointer fields only reference entries
+// owned by this struct and are never sent independently across threads.
+unsafe impl Send for OwnedEnviron {}
+
+impl OwnedEnviron {
+  const fn new() -> Self {
+    Self {
+      initialized: false,
+      entries: Vec::new(),
+      pointers: Vec::new(),
+    }
+  }
+
+  fn ensure_initialized(&mut self) {
+    if self.initialized {
+      return;
+    }
+
+    // SAFETY: Reading the raw process-global `environ` pointer does not dereference it.
+    let environ_ptr = unsafe { environ };
+
+    self.entries = if environ_ptr.is_null() {
+      copy_entries_from_host_env()
+    } else {
+      // SAFETY: The source pointer originates from startup/host environment and may be null.
+      unsafe { copy_entries_from_environ(environ_ptr) }
+    };
+    self.initialized = true;
+    self.publish();
+  }
+
+  fn contains_name(&self, name_bytes: &[u8]) -> bool {
+    self.find_name_index(name_bytes).is_some()
+  }
+
+  fn set_name_value(&mut self, name_bytes: &[u8], value_bytes: &[u8]) {
+    let entry = build_env_entry(name_bytes, value_bytes);
+
+    if let Some(index) = self.find_name_index(name_bytes) {
+      self.entries[index] = entry;
+
+      let mut kept_first = false;
+
+      self.entries.retain(|entry| {
+        if !env_entry_has_name(entry, name_bytes) {
+          return true;
+        }
+
+        if kept_first {
+          return false;
+        }
+
+        kept_first = true;
+
+        true
+      });
+    } else {
+      self.entries.push(entry);
+    }
+
+    self.publish();
+  }
+
+  fn remove_name(&mut self, name_bytes: &[u8]) {
+    let original_len = self.entries.len();
+
+    self
+      .entries
+      .retain(|entry| !env_entry_has_name(entry, name_bytes));
+
+    if self.entries.len() != original_len {
+      self.publish();
+    }
+  }
+
+  fn clear(&mut self) {
+    self.entries.clear();
+    self.publish();
+  }
+
+  fn find_name_index(&self, name_bytes: &[u8]) -> Option<usize> {
+    self
+      .entries
+      .iter()
+      .position(|entry| env_entry_has_name(entry, name_bytes))
+  }
+
+  fn publish(&mut self) {
+    if self.entries.is_empty() {
+      self.pointers.clear();
+      // SAFETY: Publishing a null pointer is valid for empty process environment.
+      unsafe {
+        environ = ptr::null_mut();
+      }
+
+      return;
+    }
+
+    self.pointers.clear();
+    self.pointers.reserve(self.entries.len() + 1);
+
+    for entry in &mut self.entries {
+      self.pointers.push(entry.as_ptr().cast_mut());
+    }
+
+    self.pointers.push(ptr::null_mut());
+
+    // SAFETY: `self.pointers` is kept alive by this `OwnedEnviron` state.
+    unsafe {
+      environ = self.pointers.as_mut_ptr();
+    }
+  }
+}
+
+fn env_entry_has_name(entry: &CString, name_bytes: &[u8]) -> bool {
+  let bytes = entry.to_bytes();
+
+  bytes
+    .iter()
+    .position(|byte| *byte == b'=')
+    .is_some_and(|equal_pos| &bytes[..equal_pos] == name_bytes)
 }
 
 /// Test-only guard that forces host environment symbol resolution to appear unavailable.
@@ -82,6 +240,79 @@ fn env_mutation_guard() -> MutexGuard<'static, ()> {
   }
 }
 
+/// Acquires the shared environment lock used by mutators and lookup fast paths.
+pub(super) fn lock_environ_state() -> MutexGuard<'static, ()> {
+  env_mutation_guard()
+}
+
+/// Ensures the owned environment snapshot has been initialized.
+///
+/// Callers must hold [`lock_environ_state`] for the full duration to serialize
+/// bootstrap against concurrent mutation entry points.
+pub(super) fn ensure_owned_environ_initialized_for_lookup() {
+  let mut owned_env = owned_environ_guard();
+
+  owned_env.ensure_initialized();
+}
+
+/// Reports whether the owned environment snapshot has already been initialized.
+///
+/// Callers should hold [`lock_environ_state`] while consulting this state so
+/// the answer stays consistent with concurrent mutation/bootstrap paths.
+pub(super) fn owned_environ_initialized_for_lookup() -> bool {
+  let owned_env = owned_environ_guard();
+
+  owned_env.initialized
+}
+
+#[cfg(test)]
+pub(super) fn reset_owned_environ_for_test() {
+  let _guard = env_mutation_guard();
+
+  if let Some(state) = OWNED_ENV.get() {
+    let mut owned_env = match state.lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+
+    owned_env.initialized = false;
+    owned_env.entries.clear();
+    owned_env.pointers.clear();
+  }
+
+  clear_putenv_aliases();
+  // SAFETY: test-only reset while environment mutation is serialized.
+  unsafe {
+    environ = ptr::null_mut();
+  }
+}
+
+#[cfg(test)]
+pub(super) fn force_owned_environ_empty_for_test() {
+  let _guard = env_mutation_guard();
+  let mut owned_env = owned_environ_guard();
+
+  owned_env.initialized = true;
+  owned_env.entries.clear();
+  owned_env.pointers.clear();
+  drop(owned_env);
+
+  // SAFETY: test-only state injection while environment mutation is serialized.
+  unsafe {
+    environ = ptr::null_mut();
+  }
+}
+
+fn owned_environ_guard() -> MutexGuard<'static, OwnedEnviron> {
+  match OWNED_ENV
+    .get_or_init(|| Mutex::new(OwnedEnviron::new()))
+    .lock()
+  {
+    Ok(guard) => guard,
+    Err(poisoned) => poisoned.into_inner(),
+  }
+}
+
 fn putenv_alias_guard() -> MutexGuard<'static, Vec<PutEnvAlias>> {
   match PUTENV_ALIASES.get_or_init(|| Mutex::new(Vec::new())).lock() {
     Ok(guard) => guard,
@@ -89,7 +320,118 @@ fn putenv_alias_guard() -> MutexGuard<'static, Vec<PutEnvAlias>> {
   }
 }
 
+unsafe fn copy_entries_from_environ(mut environ_ptr: *mut *mut c_char) -> Vec<CString> {
+  let mut copied = Vec::new();
+
+  while !environ_ptr.is_null() {
+    // SAFETY: `environ_ptr` walks a NUL-terminated `char**` environment array.
+    let entry_ptr = unsafe { environ_ptr.read() };
+
+    if entry_ptr.is_null() {
+      break;
+    }
+
+    // SAFETY: each non-null environment entry points to a NUL-terminated string.
+    let bytes = unsafe { CStr::from_ptr(entry_ptr).to_bytes() };
+    let owned =
+      CString::new(bytes).unwrap_or_else(|_| unreachable!("environment entries are NUL-free"));
+
+    copied.push(owned);
+
+    // SAFETY: advance within the same NUL-terminated pointer array.
+    environ_ptr = unsafe { environ_ptr.add(1) };
+  }
+
+  copied
+}
+
+#[cfg(unix)]
+fn copy_entries_from_proc_environ() -> Vec<CString> {
+  let Ok(contents) = std::fs::read("/proc/self/environ") else {
+    return Vec::new();
+  };
+  let mut copied = Vec::new();
+
+  for entry in contents.split(|byte| *byte == 0) {
+    if entry.is_empty() {
+      continue;
+    }
+
+    let Some(equal_pos) = entry.iter().position(|byte| *byte == b'=') else {
+      continue;
+    };
+    let name_bytes = &entry[..equal_pos];
+    let value_bytes = &entry[equal_pos + 1..];
+
+    if name_bytes.is_empty() || name_bytes.contains(&b'=') {
+      continue;
+    }
+
+    copied.push(build_env_entry(name_bytes, value_bytes));
+  }
+
+  copied
+}
+
+#[cfg(unix)]
+fn copy_entries_from_host_env() -> Vec<CString> {
+  let proc_entries = copy_entries_from_proc_environ();
+
+  if !proc_entries.is_empty() {
+    return proc_entries;
+  }
+
+  let mut copied = Vec::new();
+
+  for (name, value) in std::env::vars_os() {
+    let name_bytes = name.into_vec();
+    let value_bytes = value.into_vec();
+
+    if name_bytes.is_empty() || name_bytes.contains(&b'=') {
+      continue;
+    }
+
+    if name_bytes.contains(&0) || value_bytes.contains(&0) {
+      continue;
+    }
+
+    copied.push(build_env_entry(&name_bytes, &value_bytes));
+  }
+
+  copied
+}
+
+#[cfg(not(unix))]
+fn copy_entries_from_host_env() -> Vec<CString> {
+  Vec::new()
+}
+
+fn build_env_entry(name_bytes: &[u8], value_bytes: &[u8]) -> CString {
+  let mut entry = Vec::with_capacity(name_bytes.len() + 1 + value_bytes.len());
+
+  entry.extend_from_slice(name_bytes);
+  entry.push(b'=');
+  entry.extend_from_slice(value_bytes);
+
+  CString::new(entry).unwrap_or_else(|_| unreachable!("validated name/value are NUL-free"))
+}
+
+#[cfg(test)]
 fn resolve_symbol(symbol: &'static [u8]) -> Option<*mut c_void> {
+  if let Some(versioned) = GLIBC_DLSYM_VERSION_CANDIDATES.iter().find_map(|version| {
+    // SAFETY: symbol and version are static NUL-terminated strings.
+    let resolved =
+      unsafe { host_dlvsym(RTLD_NEXT, symbol.as_ptr().cast(), version.as_ptr().cast()) };
+
+    if resolved.is_null() {
+      return None;
+    }
+
+    Some(resolved)
+  }) {
+    return Some(versioned);
+  }
+
   // SAFETY: `symbol` is a static NUL-terminated symbol name.
   let resolved = unsafe { dlsym(RTLD_NEXT, symbol.as_ptr().cast()) };
 
@@ -100,17 +442,32 @@ fn resolve_symbol(symbol: &'static [u8]) -> Option<*mut c_void> {
   Some(resolved)
 }
 
-fn resolve_host_env_fns() -> Option<HostEnvFns> {
+#[cfg(test)]
+fn resolve_host_getenv() -> Option<HostGetenvFn> {
   let getenv_ptr = resolve_symbol(SYMBOL_GETENV)?;
+
+  // SAFETY: `dlsym` returned `getenv` with matching C signature.
+  Some(unsafe {
+    mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> *mut c_char>(getenv_ptr)
+  })
+}
+
+#[cfg(test)]
+fn host_getenv_fallback() -> Option<HostGetenvFn> {
+  #[cfg(test)]
+  if FORCE_HOST_ENV_UNAVAILABLE_FOR_TEST.load(Ordering::SeqCst) > 0 {
+    return None;
+  }
+
+  *HOST_GETENV_FALLBACK.get_or_init(resolve_host_getenv)
+}
+
+#[cfg(test)]
+fn resolve_host_env_fns() -> Option<HostEnvFns> {
   let setenv_ptr = resolve_symbol(SYMBOL_SETENV)?;
   let unsetenv_ptr = resolve_symbol(SYMBOL_UNSETENV)?;
-  let clearenv_ptr = resolve_symbol(SYMBOL_CLEARENV)?;
 
   Some(HostEnvFns {
-    // SAFETY: `dlsym` returns C function addresses for the exact signatures below.
-    getenv: unsafe {
-      mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> *mut c_char>(getenv_ptr)
-    },
     // SAFETY: `dlsym` returns C function addresses for the exact signatures below.
     setenv: unsafe {
       mem::transmute::<
@@ -122,13 +479,10 @@ fn resolve_host_env_fns() -> Option<HostEnvFns> {
     unsetenv: unsafe {
       mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> c_int>(unsetenv_ptr)
     },
-    // SAFETY: `dlsym` returns C function addresses for the exact signatures below.
-    clearenv: unsafe {
-      mem::transmute::<*mut c_void, unsafe extern "C" fn() -> c_int>(clearenv_ptr)
-    },
   })
 }
 
+#[cfg(test)]
 fn host_env_fns() -> Option<&'static HostEnvFns> {
   #[cfg(test)]
   if FORCE_HOST_ENV_UNAVAILABLE_FOR_TEST.load(Ordering::SeqCst) > 0 {
@@ -149,6 +503,7 @@ pub(super) fn force_host_env_unavailable_for_test() -> HostEnvUnavailableGuard {
   HostEnvUnavailableGuard
 }
 
+#[cfg(test)]
 fn host_errno_or(default_errno: c_int) -> c_int {
   io::Error::last_os_error()
     .raw_os_error()
@@ -156,6 +511,7 @@ fn host_errno_or(default_errno: c_int) -> c_int {
     .unwrap_or(default_errno)
 }
 
+#[cfg(test)]
 fn host_setenv(name: &CStr, value: &CStr, overwrite: c_int) -> Result<(), c_int> {
   let host = host_env_fns().ok_or(EINVAL)?;
   // SAFETY: `name`/`value` are valid NUL-terminated strings.
@@ -168,6 +524,7 @@ fn host_setenv(name: &CStr, value: &CStr, overwrite: c_int) -> Result<(), c_int>
   Err(host_errno_or(EINVAL))
 }
 
+#[cfg(test)]
 fn host_unsetenv(name: &CStr) -> Result<(), c_int> {
   let host = host_env_fns().ok_or(EINVAL)?;
   // SAFETY: `name` is a valid NUL-terminated string.
@@ -180,23 +537,12 @@ fn host_unsetenv(name: &CStr) -> Result<(), c_int> {
   Err(host_errno_or(EINVAL))
 }
 
-fn host_clearenv() -> Result<(), c_int> {
-  let host = host_env_fns().ok_or(EINVAL)?;
-  // SAFETY: `clearenv` takes no arguments and mutates process environment.
-  let rc = unsafe { (host.clearenv)() };
-
-  if rc == 0 {
-    return Ok(());
-  }
-
-  Err(host_errno_or(EINVAL))
-}
-
+#[cfg(test)]
 pub(super) unsafe fn host_getenv(name: *const c_char) -> Option<*mut c_char> {
-  let host = host_env_fns()?;
+  let host = host_getenv_fallback()?;
 
   // SAFETY: Caller must provide a valid C string pointer or null.
-  Some(unsafe { (host.getenv)(name) })
+  Some(unsafe { host(name) })
 }
 
 fn set_errno(errno_value: c_int) {
@@ -248,22 +594,76 @@ fn remove_putenv_alias(name_bytes: &[u8]) {
   aliases.retain(|alias| alias.name.as_ref() != name_bytes);
 }
 
+fn remove_putenv_aliases_for_name_or_entry(
+  name_bytes: &[u8],
+  entry_ptr: *mut c_char,
+) -> Vec<Vec<u8>> {
+  let entry_addr = entry_ptr as usize;
+  let mut aliases = putenv_alias_guard();
+  let mut removed_names = Vec::new();
+
+  aliases.retain(|alias| {
+    if alias.name.as_ref() == name_bytes || alias.entry_addr == entry_addr {
+      removed_names.push(alias.name.to_vec());
+
+      return false;
+    }
+
+    true
+  });
+  drop(aliases);
+
+  removed_names.sort_unstable();
+  removed_names.dedup();
+
+  removed_names
+}
+
 fn clear_putenv_aliases() {
   let mut aliases = putenv_alias_guard();
 
   aliases.clear();
 }
 
-fn update_putenv_alias(name_bytes: &[u8], entry_ptr: *mut c_char) {
+fn remove_owned_name_if_initialized(name_bytes: &[u8]) {
+  let mut owned_env = owned_environ_guard();
+
+  if !owned_env.initialized {
+    return;
+  }
+
+  owned_env.remove_name(name_bytes);
+}
+
+fn rebind_putenv_alias(name_bytes: &[u8], entry_ptr: *mut c_char) -> Vec<Vec<u8>> {
   let entry_addr = entry_ptr as usize;
   let mut aliases = putenv_alias_guard();
+  let mut renamed_names = Vec::new();
 
-  aliases.retain(|alias| alias.name.as_ref() != name_bytes);
+  aliases.retain(|alias| {
+    if alias.name.as_ref() == name_bytes {
+      return false;
+    }
+
+    if alias.entry_addr == entry_addr {
+      renamed_names.push(alias.name.to_vec());
+
+      return false;
+    }
+
+    true
+  });
 
   aliases.push(PutEnvAlias {
     name: name_bytes.to_vec().into_boxed_slice(),
     entry_addr,
   });
+  drop(aliases);
+
+  renamed_names.sort_unstable();
+  renamed_names.dedup();
+
+  renamed_names
 }
 
 const fn parse_alias_value_ptr_impl(
@@ -365,8 +765,16 @@ pub(super) fn lookup_putenv_alias_value(name_bytes: &[u8]) -> Option<*mut c_char
   remove_indices.sort_unstable();
   remove_indices.dedup();
 
+  let removed_stale_aliases = resolved_value_ptr.is_none() && !remove_indices.is_empty();
+
   for alias_index in remove_indices.into_iter().rev() {
     aliases.remove(alias_index);
+  }
+
+  drop(aliases);
+
+  if removed_stale_aliases {
+    remove_owned_name_if_initialized(name_bytes);
   }
 
   resolved_value_ptr
@@ -415,20 +823,37 @@ pub unsafe extern "C" fn setenv(
     return fail_with_errno(errno_value);
   }
 
-  let name_c = CString::new(name_bytes.clone()).unwrap_or_else(|_| unreachable!("validated name"));
-  let value_c = CString::new(value_bytes).unwrap_or_else(|_| unreachable!("validated value"));
   let previous_errno = current_errno();
   let _guard = env_mutation_guard();
+
+  {
+    let mut owned_env = owned_environ_guard();
+
+    owned_env.ensure_initialized();
+  }
+
   let existed_before = if overwrite == 0 {
-    // SAFETY: `name_c` is a valid NUL-terminated key for host lookup.
-    unsafe { host_getenv(name_c.as_ptr()) }.is_some_and(|value_ptr| !value_ptr.is_null())
+    if lookup_putenv_alias_value(name_bytes.as_slice()).is_some() {
+      true
+    } else {
+      let owned_env = owned_environ_guard();
+
+      owned_env.contains_name(name_bytes.as_slice())
+    }
   } else {
     false
   };
 
-  if let Err(errno_value) = host_setenv(&name_c, &value_c, overwrite) {
-    return fail_with_errno(errno_value);
+  if overwrite == 0 && existed_before {
+    set_errno(previous_errno);
+
+    return 0;
   }
+
+  let mut owned_env = owned_environ_guard();
+
+  owned_env.set_name_value(name_bytes.as_slice(), value_bytes.as_slice());
+  drop(owned_env);
 
   if overwrite != 0 || !existed_before {
     remove_putenv_alias(&name_bytes);
@@ -467,15 +892,16 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
     return fail_with_errno(errno_value);
   }
 
-  let name_c = CString::new(name_bytes.clone()).unwrap_or_else(|_| unreachable!("validated name"));
   let previous_errno = current_errno();
   let _guard = env_mutation_guard();
+  let mut owned_env = owned_environ_guard();
 
-  if let Err(errno_value) = host_unsetenv(&name_c) {
-    return fail_with_errno(errno_value);
-  }
+  owned_env.ensure_initialized();
+  owned_env.remove_name(name_bytes.as_slice());
+  drop(owned_env);
 
   remove_putenv_alias(&name_bytes);
+
   set_errno(previous_errno);
 
   0
@@ -513,6 +939,9 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
   };
   let previous_errno = current_errno();
   let _guard = env_mutation_guard();
+  let mut owned_env = owned_environ_guard();
+
+  owned_env.ensure_initialized();
 
   if let Some(eq_pos) = bytes.iter().position(|byte| *byte == b'=') {
     let name_bytes = &bytes[..eq_pos];
@@ -522,14 +951,16 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
       return fail_with_errno(errno_value);
     }
 
-    let name_c = CString::new(name_bytes).unwrap_or_else(|_| unreachable!("validated name"));
-    let value_c = CString::new(value_bytes).unwrap_or_else(|_| unreachable!("validated value"));
+    owned_env.set_name_value(name_bytes, value_bytes);
+    drop(owned_env);
 
-    if let Err(errno_value) = host_setenv(&name_c, &value_c, 1) {
-      return fail_with_errno(errno_value);
+    let renamed_names = rebind_putenv_alias(name_bytes, string);
+
+    for renamed_name in renamed_names {
+      if lookup_putenv_alias_value(renamed_name.as_slice()).is_none() {
+        remove_owned_name_if_initialized(renamed_name.as_slice());
+      }
     }
-
-    update_putenv_alias(name_bytes, string);
 
     set_errno(previous_errno);
 
@@ -540,13 +971,17 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
     return fail_with_errno(errno_value);
   }
 
-  let name_c = CString::new(bytes).unwrap_or_else(|_| unreachable!("validated name"));
+  owned_env.remove_name(&bytes);
+  drop(owned_env);
 
-  if let Err(errno_value) = host_unsetenv(&name_c) {
-    return fail_with_errno(errno_value);
+  let removed_names = remove_putenv_aliases_for_name_or_entry(&bytes, string);
+
+  for removed_name in removed_names {
+    if lookup_putenv_alias_value(removed_name.as_slice()).is_none() {
+      remove_owned_name_if_initialized(removed_name.as_slice());
+    }
   }
 
-  remove_putenv_alias(name_c.to_bytes());
   set_errno(previous_errno);
 
   0
@@ -558,7 +993,7 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
 /// Returns `0` on success. Returns `-1` and sets `errno` on failure.
 ///
 /// # Errors
-/// Propagates host `clearenv` failures via `errno`.
+/// This implementation does not report additional errors.
 ///
 /// On success, this implementation preserves the caller's current `errno`.
 /// On failure, this implementation leaves existing `putenv` alias tracking
@@ -571,12 +1006,14 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
 pub extern "C" fn clearenv() -> c_int {
   let previous_errno = current_errno();
   let _guard = env_mutation_guard();
+  let mut owned_env = owned_environ_guard();
 
-  if let Err(errno_value) = host_clearenv() {
-    return fail_with_errno(errno_value);
-  }
+  owned_env.ensure_initialized();
+  owned_env.clear();
+  drop(owned_env);
 
   clear_putenv_aliases();
+
   set_errno(previous_errno);
 
   0
@@ -585,19 +1022,54 @@ pub extern "C" fn clearenv() -> c_int {
 #[cfg(test)]
 mod tests {
   use std::ffi::{CStr, CString};
-  use std::sync::{Mutex, OnceLock};
+  use std::sync::MutexGuard;
 
   use crate::abi::errno::EINVAL;
   use crate::errno::__errno_location;
+  use crate::stdlib::env_core::getenv;
   use crate::stdlib::env_mut::{
-    clearenv, force_host_env_unavailable_for_test, host_env_fns, host_getenv, host_unsetenv,
-    lookup_putenv_alias_value, putenv, remove_putenv_alias, setenv, unsetenv,
+    clearenv, force_host_env_unavailable_for_test, host_env_fns, host_getenv, host_setenv,
+    host_unsetenv, lookup_putenv_alias_value, putenv, remove_putenv_alias,
+    reset_owned_environ_for_test, setenv, unsetenv,
   };
+  use crate::stdlib::lock_environ_for_test;
 
-  static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+  static TEST_LOCK: SharedEnvTestLock = SharedEnvTestLock;
 
-  fn test_lock() -> &'static Mutex<()> {
-    TEST_LOCK.get_or_init(|| Mutex::new(()))
+  struct SharedEnvTestLock;
+
+  struct SharedEnvTestLockPoisoned;
+
+  struct OwnedEnvironReset;
+
+  impl SharedEnvTestLock {
+    fn lock(&self) -> Result<MutexGuard<'static, ()>, SharedEnvTestLockPoisoned> {
+      let _ = self;
+
+      if std::thread::panicking() {
+        Err(SharedEnvTestLockPoisoned)
+      } else {
+        Ok(lock_environ_for_test())
+      }
+    }
+  }
+
+  impl SharedEnvTestLockPoisoned {
+    fn into_inner(self) -> MutexGuard<'static, ()> {
+      let _ = self;
+
+      lock_environ_for_test()
+    }
+  }
+
+  impl Drop for OwnedEnvironReset {
+    fn drop(&mut self) {
+      reset_owned_environ_for_test();
+    }
+  }
+
+  fn test_lock() -> &'static SharedEnvTestLock {
+    &TEST_LOCK
   }
 
   fn read_errno() -> i32 {
@@ -610,6 +1082,30 @@ mod tests {
     unsafe {
       __errno_location().write(value);
     }
+  }
+
+  fn set_owned_entries_for_test(entries: &[&[u8]]) {
+    let mut owned_env = super::owned_environ_guard();
+
+    owned_env.initialized = true;
+    owned_env.entries = entries
+      .iter()
+      .map(|entry| {
+        CString::new((*entry).to_vec())
+          .unwrap_or_else(|_| unreachable!("test entries must be NUL-free"))
+      })
+      .collect();
+    owned_env.publish();
+  }
+
+  fn owned_entry_count(name_bytes: &[u8]) -> usize {
+    let owned_env = super::owned_environ_guard();
+
+    owned_env
+      .entries
+      .iter()
+      .filter(|entry| super::env_entry_has_name(entry, name_bytes))
+      .count()
   }
 
   #[test]
@@ -702,6 +1198,37 @@ mod tests {
     entry[0] = original_first;
 
     assert!(lookup_putenv_alias_value(key).is_none());
+  }
+
+  #[test]
+  fn lookup_putenv_alias_value_drops_stale_owned_copy_after_name_prefix_mismatch() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let _owned_reset = OwnedEnvironReset;
+    let key = CString::new("RLIBC_I017_ALIAS_RENAME_STALE_COPY").expect("CString::new failed");
+    let mut entry = b"RLIBC_I017_ALIAS_RENAME_STALE_COPY=value\0".to_vec();
+    let original_first = entry[0];
+
+    reset_owned_environ_for_test();
+    remove_putenv_alias(key.as_bytes());
+
+    // SAFETY: `entry` points to a mutable NUL-terminated `NAME=VALUE` string.
+    assert_eq!(unsafe { putenv(entry.as_mut_ptr().cast()) }, 0);
+    // SAFETY: `key` is a valid NUL-terminated environment variable name.
+    assert!(!unsafe { getenv(key.as_ptr()) }.is_null());
+
+    entry[0] = b'X';
+
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
+    // SAFETY: `key` is a valid NUL-terminated environment variable name.
+    assert!(unsafe { getenv(key.as_ptr()) }.is_null());
+
+    entry[0] = original_first;
+
+    // SAFETY: `key` is a valid NUL-terminated environment variable name.
+    assert!(unsafe { getenv(key.as_ptr()) }.is_null());
   }
 
   #[test]
@@ -990,6 +1517,45 @@ mod tests {
   }
 
   #[test]
+  fn putenv_renamed_buffer_rebind_removes_old_name_copy() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let _owned_reset = OwnedEnvironReset;
+    let old_name =
+      CString::new("RLIBC_I017_PUTENV_RENAME_BUFFER_OLD").expect("CString::new failed");
+    let new_name =
+      CString::new("RLIBC_I017_PUTENV_RENAME_BUFFER_NEW").expect("CString::new failed");
+    let mut entry = b"RLIBC_I017_PUTENV_RENAME_BUFFER_OLD=alpha\0".to_vec();
+
+    reset_owned_environ_for_test();
+    remove_putenv_alias(old_name.as_bytes());
+    remove_putenv_alias(new_name.as_bytes());
+
+    // SAFETY: `entry` points to a mutable NUL-terminated `NAME=VALUE` string.
+    assert_eq!(unsafe { putenv(entry.as_mut_ptr().cast()) }, 0);
+    // SAFETY: `old_name` is a valid NUL-terminated environment variable name.
+    assert!(!unsafe { getenv(old_name.as_ptr()) }.is_null());
+
+    entry[..new_name.as_bytes().len()].copy_from_slice(new_name.as_bytes());
+
+    // SAFETY: `entry` still points to a mutable NUL-terminated `NAME=VALUE` string.
+    assert_eq!(unsafe { putenv(entry.as_mut_ptr().cast()) }, 0);
+    // SAFETY: `old_name` is a valid NUL-terminated environment variable name.
+    assert!(unsafe { getenv(old_name.as_ptr()) }.is_null());
+
+    // SAFETY: `new_name` is a valid NUL-terminated environment variable name.
+    let value_ptr = unsafe { getenv(new_name.as_ptr()) };
+
+    assert!(!value_ptr.is_null());
+    // SAFETY: `value_ptr` points to a NUL-terminated value string.
+    let value = unsafe { CStr::from_ptr(value_ptr.cast_const()) };
+
+    assert_eq!(value.to_bytes(), b"alpha");
+  }
+
+  #[test]
   fn host_env_unavailable_guard_is_nestable() {
     let _test_guard = match test_lock().lock() {
       Ok(guard) => guard,
@@ -1027,8 +1593,8 @@ mod tests {
     // SAFETY: `entry` points to a mutable NUL-terminated `NAME=VALUE` string.
     let rc = unsafe { putenv(entry.as_mut_ptr().cast()) };
 
-    assert_eq!(rc, -1);
-    assert!(lookup_putenv_alias_value(key).is_none());
+    assert_eq!(rc, 0);
+    assert!(lookup_putenv_alias_value(key).is_some());
   }
 
   #[test]
@@ -1048,9 +1614,9 @@ mod tests {
     // SAFETY: `entry` points to a mutable NUL-terminated `NAME=VALUE` string.
     let rc = unsafe { putenv(entry.as_mut_ptr().cast()) };
 
-    assert_eq!(rc, -1);
-    assert_eq!(read_errno(), EINVAL);
-    assert!(lookup_putenv_alias_value(key).is_none());
+    assert_eq!(rc, 0);
+    assert_eq!(read_errno(), 11);
+    assert!(lookup_putenv_alias_value(key).is_some());
   }
 
   #[test]
@@ -1077,13 +1643,13 @@ mod tests {
     // SAFETY: `second` points to a mutable NUL-terminated `NAME=VALUE` string.
     let rc = unsafe { putenv(second.as_mut_ptr().cast()) };
 
-    assert_eq!(rc, -1);
-    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(rc, 0);
+    assert_eq!(read_errno(), 19);
 
-    first[value_offset..value_offset + 5].copy_from_slice(b"bravo");
+    second[value_offset..value_offset + 5].copy_from_slice(b"bravo");
 
-    let value_ptr = lookup_putenv_alias_value(key).expect("existing alias must be preserved");
-    // SAFETY: `value_ptr` points inside test-owned `first` NUL-terminated buffer.
+    let value_ptr = lookup_putenv_alias_value(key).expect("latest alias must be tracked");
+    // SAFETY: `value_ptr` points inside test-owned `second` NUL-terminated buffer.
     let current = unsafe { CStr::from_ptr(value_ptr.cast_const()) };
 
     assert_eq!(current.to_bytes(), b"bravo");
@@ -1131,7 +1697,6 @@ mod tests {
     };
     let key = CString::new("RLIBC_I016_SETENV_FAIL_ALIAS").expect("CString::new failed");
     let value = CString::new("replacement").expect("CString::new failed");
-    let value_offset = b"RLIBC_I016_SETENV_FAIL_ALIAS=".len();
     let mut entry = b"RLIBC_I016_SETENV_FAIL_ALIAS=value\0".to_vec();
 
     remove_putenv_alias(key.as_bytes());
@@ -1149,17 +1714,9 @@ mod tests {
     // SAFETY: `key` and `value` are valid NUL-terminated strings.
     let set_rc = unsafe { setenv(key.as_ptr(), value.as_ptr(), 1) };
 
-    assert_eq!(set_rc, -1);
-    assert_eq!(read_errno(), EINVAL);
-    assert!(lookup_putenv_alias_value(key.as_bytes()).is_some());
-
-    entry[value_offset..value_offset + 5].copy_from_slice(b"omega");
-
-    let value_ptr = lookup_putenv_alias_value(key.as_bytes()).expect("alias must remain");
-    // SAFETY: `value_ptr` points inside test-owned `entry` NUL-terminated buffer.
-    let current = unsafe { CStr::from_ptr(value_ptr.cast_const()) };
-
-    assert_eq!(current.to_bytes(), b"omega");
+    assert_eq!(set_rc, 0);
+    assert_eq!(read_errno(), 37);
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
   }
 
   #[test]
@@ -1189,8 +1746,8 @@ mod tests {
     // SAFETY: `key` and `value` are valid NUL-terminated strings.
     let set_rc = unsafe { setenv(key.as_ptr(), value.as_ptr(), 0) };
 
-    assert_eq!(set_rc, -1);
-    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(set_rc, 0);
+    assert_eq!(read_errno(), 73);
     assert!(lookup_putenv_alias_value(key.as_bytes()).is_some());
 
     entry[value_offset..value_offset + 5].copy_from_slice(b"omega");
@@ -1238,18 +1795,15 @@ mod tests {
 
     assert_eq!(set_rc, 0);
     assert_eq!(read_errno(), 91);
-    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_some());
 
     entry[value_offset..value_offset + 5].copy_from_slice(b"omega");
 
-    let after = unsafe { host_getenv(key.as_ptr()) }.expect("host resolver must be available");
+    let value_ptr = lookup_putenv_alias_value(key.as_bytes()).expect("alias must remain active");
+    // SAFETY: `value_ptr` points inside test-owned `entry` NUL-terminated buffer.
+    let current = unsafe { CStr::from_ptr(value_ptr.cast_const()) };
 
-    assert!(!after.is_null());
-
-    // SAFETY: `after` is a valid non-null NUL-terminated value pointer.
-    let current = unsafe { CStr::from_ptr(after.cast_const()) };
-
-    assert_eq!(current.to_bytes(), b"fresh");
+    assert_eq!(current.to_bytes(), b"omega");
   }
 
   #[test]
@@ -1283,14 +1837,88 @@ mod tests {
 
     entry[value_offset..value_offset + 5].copy_from_slice(b"omega");
 
-    let current = unsafe { host_getenv(key.as_ptr()) }.expect("host resolver must be available");
+    // SAFETY: `key` is a valid NUL-terminated key.
+    let current = unsafe { getenv(key.as_ptr()) };
 
     assert!(!current.is_null());
 
     // SAFETY: `current` is non-null and points to a NUL-terminated value.
-    let value_now = unsafe { CStr::from_ptr(current.cast_const()) };
+    let value_now = unsafe { CStr::from_ptr(current) };
 
     assert_eq!(value_now.to_bytes(), b"replacement");
+  }
+
+  #[test]
+  fn setenv_overwrite_collapses_owned_duplicate_entries() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let _owned_reset = OwnedEnvironReset;
+    let key = CString::new("RLIBC_I017_SETENV_DUPLICATE_KEY").expect("CString::new failed");
+    let value = CString::new("fresh").expect("CString::new failed");
+
+    reset_owned_environ_for_test();
+    set_owned_entries_for_test(&[
+      b"RLIBC_I017_SETENV_DUPLICATE_KEY=old-a",
+      b"RLIBC_I017_SETENV_DUPLICATE_KEY=old-b",
+      b"RLIBC_I017_SETENV_DUPLICATE_OTHER=keep",
+    ]);
+
+    assert_eq!(owned_entry_count(key.as_bytes()), 2);
+
+    // SAFETY: `key` and `value` are valid NUL-terminated strings.
+    assert_eq!(unsafe { setenv(key.as_ptr(), value.as_ptr(), 1) }, 0);
+    assert_eq!(owned_entry_count(key.as_bytes()), 1);
+
+    // SAFETY: `key` is a valid NUL-terminated environment variable name.
+    let value_ptr = unsafe { getenv(key.as_ptr()) };
+
+    assert!(!value_ptr.is_null());
+    // SAFETY: `value_ptr` points to a NUL-terminated value string.
+    let current = unsafe { CStr::from_ptr(value_ptr.cast_const()) };
+
+    assert_eq!(current.to_bytes(), b"fresh");
+  }
+
+  #[test]
+  fn setenv_no_overwrite_ignores_host_only_value_and_updates_owned_environ() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let key =
+      CString::new("RLIBC_I016_SETENV_NO_OVERWRITE_IGNORE_HOST_ONLY").expect("CString::new failed");
+    let value = CString::new("owned").expect("CString::new failed");
+
+    remove_putenv_alias(key.as_bytes());
+    assert_eq!(clearenv(), 0);
+
+    let host_value = CString::new("host_only").expect("CString::new failed");
+    let host_set = host_setenv(&key, &host_value, 1);
+
+    assert!(host_set.is_ok());
+
+    write_errno(52);
+
+    // SAFETY: `key` and `value` are valid NUL-terminated strings.
+    let set_rc = unsafe { setenv(key.as_ptr(), value.as_ptr(), 0) };
+
+    assert_eq!(set_rc, 0);
+    assert_eq!(read_errno(), 52);
+
+    // SAFETY: `key` is a valid NUL-terminated key.
+    let resolved = unsafe { getenv(key.as_ptr()) };
+
+    assert!(!resolved.is_null());
+    // SAFETY: `resolved` points to a NUL-terminated value string.
+    let current = unsafe { CStr::from_ptr(resolved.cast_const()) };
+
+    assert_eq!(current.to_bytes(), b"owned");
+
+    let cleanup = host_unsetenv(&key);
+
+    assert!(cleanup.is_ok());
   }
 
   #[test]
@@ -1706,9 +2334,9 @@ mod tests {
     // SAFETY: `key` and `value` are valid NUL-terminated strings.
     let set_rc = unsafe { setenv(key.as_ptr(), value.as_ptr(), 1) };
 
-    assert_eq!(set_rc, -1);
-    assert_eq!(read_errno(), EINVAL);
-    assert!(lookup_putenv_alias_value(key.as_bytes()).is_some());
+    assert_eq!(set_rc, 0);
+    assert_eq!(read_errno(), 29);
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
   }
 
   #[test]
@@ -1927,6 +2555,31 @@ mod tests {
   }
 
   #[test]
+  fn unsetenv_removes_all_owned_duplicate_entries() {
+    let _test_guard = match test_lock().lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => poisoned.into_inner(),
+    };
+    let _owned_reset = OwnedEnvironReset;
+    let key = CString::new("RLIBC_I017_UNSETENV_DUPLICATE_KEY").expect("CString::new failed");
+
+    reset_owned_environ_for_test();
+    set_owned_entries_for_test(&[
+      b"RLIBC_I017_UNSETENV_DUPLICATE_KEY=old-a",
+      b"RLIBC_I017_UNSETENV_DUPLICATE_KEY=old-b",
+      b"RLIBC_I017_UNSETENV_DUPLICATE_OTHER=keep",
+    ]);
+
+    assert_eq!(owned_entry_count(key.as_bytes()), 2);
+
+    // SAFETY: `key` is a valid NUL-terminated environment variable name.
+    assert_eq!(unsafe { unsetenv(key.as_ptr()) }, 0);
+    assert_eq!(owned_entry_count(key.as_bytes()), 0);
+    // SAFETY: `key` is a valid NUL-terminated environment variable name.
+    assert!(unsafe { getenv(key.as_ptr()) }.is_null());
+  }
+
+  #[test]
   fn unsetenv_failure_does_not_remove_alias() {
     let _test_guard = match test_lock().lock() {
       Ok(guard) => guard,
@@ -1948,8 +2601,8 @@ mod tests {
     // SAFETY: `key` is a valid NUL-terminated environment variable name.
     let unset_rc = unsafe { unsetenv(key.as_ptr()) };
 
-    assert_eq!(unset_rc, -1);
-    assert!(lookup_putenv_alias_value(key.as_bytes()).is_some());
+    assert_eq!(unset_rc, 0);
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
   }
 
   #[test]
@@ -1974,9 +2627,9 @@ mod tests {
     // SAFETY: `key` is a valid NUL-terminated environment variable name.
     let unset_rc = unsafe { unsetenv(key.as_ptr()) };
 
-    assert_eq!(unset_rc, -1);
-    assert_eq!(read_errno(), EINVAL);
-    assert!(lookup_putenv_alias_value(key.as_bytes()).is_some());
+    assert_eq!(unset_rc, 0);
+    assert_eq!(read_errno(), 37);
+    assert!(lookup_putenv_alias_value(key.as_bytes()).is_none());
   }
 
   #[test]
@@ -2072,8 +2725,8 @@ mod tests {
     // SAFETY: `entry_unset` points to a mutable NUL-terminated `NAME` string.
     let put_unset_rc = unsafe { putenv(entry_unset.as_mut_ptr().cast()) };
 
-    assert_eq!(put_unset_rc, -1);
-    assert!(lookup_putenv_alias_value(key).is_some());
+    assert_eq!(put_unset_rc, 0);
+    assert!(lookup_putenv_alias_value(key).is_none());
   }
 
   #[test]
@@ -2095,8 +2748,8 @@ mod tests {
     // SAFETY: `entry_unset` points to a mutable NUL-terminated `NAME` string.
     let rc = unsafe { putenv(entry_unset.as_mut_ptr().cast()) };
 
-    assert_eq!(rc, -1);
-    assert_eq!(read_errno(), EINVAL);
+    assert_eq!(rc, 0);
+    assert_eq!(read_errno(), 62);
     assert!(lookup_putenv_alias_value(key).is_none());
   }
 
@@ -2107,7 +2760,6 @@ mod tests {
       Err(poisoned) => poisoned.into_inner(),
     };
     let key = b"RLIBC_I017_PUTENV_UNSET_FAIL_ERRNO_ALIAS";
-    let value_offset = b"RLIBC_I017_PUTENV_UNSET_FAIL_ERRNO_ALIAS=".len();
     let mut entry_set = b"RLIBC_I017_PUTENV_UNSET_FAIL_ERRNO_ALIAS=alpha\0".to_vec();
     let mut entry_unset = b"RLIBC_I017_PUTENV_UNSET_FAIL_ERRNO_ALIAS\0".to_vec();
 
@@ -2124,16 +2776,9 @@ mod tests {
     // SAFETY: `entry_unset` points to a mutable NUL-terminated `NAME` string.
     let rc = unsafe { putenv(entry_unset.as_mut_ptr().cast()) };
 
-    assert_eq!(rc, -1);
-    assert_eq!(read_errno(), EINVAL);
-
-    entry_set[value_offset..value_offset + 5].copy_from_slice(b"bravo");
-
-    let value_ptr = lookup_putenv_alias_value(key).expect("alias must be preserved");
-    // SAFETY: `value_ptr` points inside test-owned `entry_set` NUL-terminated buffer.
-    let current = unsafe { CStr::from_ptr(value_ptr.cast_const()) };
-
-    assert_eq!(current.to_bytes(), b"bravo");
+    assert_eq!(rc, 0);
+    assert_eq!(read_errno(), 61);
+    assert!(lookup_putenv_alias_value(key).is_none());
   }
 
   #[test]
@@ -2156,8 +2801,8 @@ mod tests {
     let _host_unavailable = force_host_env_unavailable_for_test();
     let clear_rc = clearenv();
 
-    assert_eq!(clear_rc, -1);
-    assert!(lookup_putenv_alias_value(key).is_some());
+    assert_eq!(clear_rc, 0);
+    assert!(lookup_putenv_alias_value(key).is_none());
   }
 
   #[test]
@@ -2243,8 +2888,8 @@ mod tests {
     let _host_unavailable = force_host_env_unavailable_for_test();
     let clear_rc = clearenv();
 
-    assert_eq!(clear_rc, -1);
-    assert_eq!(read_errno(), EINVAL);
-    assert!(lookup_putenv_alias_value(key).is_some());
+    assert_eq!(clear_rc, 0);
+    assert_eq!(read_errno(), 73);
+    assert!(lookup_putenv_alias_value(key).is_none());
   }
 }

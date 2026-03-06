@@ -9,10 +9,12 @@
 
 use crate::abi::errno::{EFAULT, EINVAL, ENAMETOOLONG};
 use crate::abi::types::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, size_t};
-use crate::errno::set_errno;
+use crate::errno::{__errno_location, set_errno};
 use crate::resource::{RLIM_INFINITY, RLIMIT_NOFILE, RLimit};
 use crate::syscall::{syscall1, syscall3, syscall4};
+use core::mem::size_of;
 use core::{ptr, slice};
+use std::sync::OnceLock;
 
 const SYS_UNAME: c_long = 63;
 const SYS_SYSINFO: c_long = 99;
@@ -20,8 +22,13 @@ const SYS_SCHED_GETAFFINITY: c_long = 204;
 const SYS_PRLIMIT64: c_long = 302;
 const SCHED_AFFINITY_BYTES: usize = 128;
 const MAX_SCHED_AFFINITY_BYTES: usize = 16 * 1024;
+const CPU_ONLINE_PATH: &str = "/sys/devices/system/cpu/online";
 const CPU_POSSIBLE_PATH: &str = "/sys/devices/system/cpu/possible";
 const CPU_PRESENT_PATH: &str = "/sys/devices/system/cpu/present";
+const PROC_STAT_PATH: &str = "/proc/stat";
+const PROC_SELF_AUXV_PATH: &str = "/proc/self/auxv";
+const AT_NULL: usize = 0;
+const AT_PAGESZ: usize = 6;
 /// `_SC_CLK_TCK` selector.
 pub const _SC_CLK_TCK: c_int = 2;
 /// `_SC_OPEN_MAX` selector.
@@ -34,11 +41,12 @@ pub const _SC_PAGE_SIZE: c_int = _SC_PAGESIZE;
 pub const _SC_NPROCESSORS_CONF: c_int = 83;
 /// `_SC_NPROCESSORS_ONLN` selector.
 pub const _SC_NPROCESSORS_ONLN: c_int = 84;
-const SYS_PAGESIZE: c_int = 4096;
+const PAGE_SIZE_VALUE: c_int = 4096;
 const CLK_TCK_VALUE: c_long = 100;
 const OPEN_MAX_FALLBACK_VALUE: c_long = 1024;
 const UTSNAME_FIELD_LEN: usize = 65;
 const UTSNAME_MAX_PAYLOAD_LEN: usize = UTSNAME_FIELD_LEN - 1;
+static PAGE_SIZE: OnceLock<c_int> = OnceLock::new();
 
 /// C-compatible `uname` payload.
 ///
@@ -120,6 +128,30 @@ fn errno_from_raw(raw: c_long) -> c_int {
   c_int::try_from(-raw).unwrap_or(c_int::MAX)
 }
 
+fn read_errno() -> c_int {
+  let errno_ptr = __errno_location();
+
+  debug_assert!(
+    !errno_ptr.is_null(),
+    "__errno_location must return valid thread-local errno storage",
+  );
+
+  // SAFETY: `__errno_location` returns readable thread-local errno storage.
+  unsafe { errno_ptr.read() }
+}
+
+fn with_preserved_errno<F, T>(f: F) -> T
+where
+  F: FnOnce() -> T,
+{
+  let saved_errno = read_errno();
+  let result = f();
+
+  set_errno(saved_errno);
+
+  result
+}
+
 fn nodename_payload_len(nodename: &[c_char; UTSNAME_FIELD_LEN]) -> usize {
   nodename
     .iter()
@@ -133,20 +165,96 @@ fn write_nodename(
   nodename: &[c_char; UTSNAME_FIELD_LEN],
 ) -> Result<(), c_int> {
   let name_len = nodename_payload_len(nodename);
-  let required = name_len + 1;
+  let copy_len = output.len().min(name_len);
 
-  if output.len() < required {
-    return Err(ENAMETOOLONG);
+  output[..copy_len].copy_from_slice(&nodename[..copy_len]);
+
+  if output.len() > name_len {
+    output[name_len] = 0;
+
+    return Ok(());
   }
 
-  output[..name_len].copy_from_slice(&nodename[..name_len]);
-  output[name_len] = 0;
+  Err(ENAMETOOLONG)
+}
 
-  Ok(())
+fn parse_page_size_from_auxv_bytes(bytes: &[u8]) -> Option<c_int> {
+  let word_len = size_of::<usize>();
+  let entry_len = word_len.checked_mul(2)?;
+
+  for entry in bytes.chunks_exact(entry_len) {
+    let (key_bytes, value_bytes) = entry.split_at(word_len);
+    let key = usize::from_ne_bytes(key_bytes.try_into().ok()?);
+    let value = usize::from_ne_bytes(value_bytes.try_into().ok()?);
+
+    if key == AT_NULL {
+      break;
+    }
+
+    if key == AT_PAGESZ {
+      let page_size = c_int::try_from(value).ok()?;
+
+      return (page_size > 0).then_some(page_size);
+    }
+  }
+
+  None
+}
+
+fn detect_page_size() -> c_int {
+  std::fs::read(PROC_SELF_AUXV_PATH)
+    .ok()
+    .as_deref()
+    .and_then(parse_page_size_from_auxv_bytes)
+    .unwrap_or(PAGE_SIZE_VALUE)
+}
+
+fn page_size() -> c_int {
+  *PAGE_SIZE.get_or_init(|| with_preserved_errno(detect_page_size))
 }
 
 fn online_processor_count() -> c_long {
-  online_processor_count_with_retries(query_online_processor_count)
+  online_processor_count_with(
+    || std::fs::read_to_string(CPU_ONLINE_PATH).ok(),
+    || std::fs::read_to_string(PROC_STAT_PATH).ok(),
+    || online_processor_count_with_retries(query_online_processor_count),
+  )
+}
+
+fn parse_online_processor_count(contents: &str) -> Option<c_long> {
+  parse_cpu_range_list(contents)
+    .filter(|count| *count > 0)
+    .and_then(|count| c_long::try_from(count).ok())
+}
+
+fn parse_proc_stat_processor_count(contents: &str) -> Option<c_long> {
+  let count = contents
+    .lines()
+    .filter_map(|line| {
+      let rest = line.strip_prefix("cpu")?;
+
+      (!rest.is_empty() && rest.as_bytes().iter().all(u8::is_ascii_digit)).then_some(1_usize)
+    })
+    .sum::<usize>()
+    .max(1);
+
+  c_long::try_from(count).ok()
+}
+
+fn online_processor_count_with<O, P, F>(
+  mut read_online: O,
+  mut read_proc_stat: P,
+  mut fallback_affinity: F,
+) -> c_long
+where
+  O: FnMut() -> Option<String>,
+  P: FnMut() -> Option<String>,
+  F: FnMut() -> c_long,
+{
+  read_online()
+    .and_then(|contents| parse_online_processor_count(&contents))
+    .or_else(|| read_proc_stat().and_then(|contents| parse_proc_stat_processor_count(&contents)))
+    .unwrap_or_else(&mut fallback_affinity)
 }
 
 fn online_processor_count_with_retries<F>(mut query: F) -> c_long
@@ -357,23 +465,28 @@ pub unsafe extern "C" fn uname(buf: *mut UtsName) -> c_int {
 
 /// C ABI entry point for `gethostname`.
 ///
-/// Copies the current nodename into `name`, including trailing NUL.
-/// On success, exactly `nodename` bytes plus the terminating NUL are written.
+/// Copies the current nodename into `name`.
+/// When `len` is larger than the nodename payload length, this writes the
+/// payload plus a terminating NUL and returns success. When `len` is nonzero
+/// but not large enough to append that NUL, this still copies the longest
+/// prefix that fits and then reports truncation with `ENAMETOOLONG`, matching
+/// glibc's observable Linux behavior.
 /// If the kernel-provided nodename is not NUL-terminated within the first
-/// Linux payload `64` bytes, this implementation copies exactly `64` bytes and
-/// appends one terminating NUL when `len` is sufficient.
+/// Linux payload `64` bytes, this implementation treats those `64` bytes as the
+/// payload and only appends a terminator when `len > 64`.
 ///
 /// # Safety
 /// - `name` must be writable for `len` bytes.
 ///
 /// # Errors
 /// - Returns `-1` and sets `errno = ENAMETOOLONG` when `len == 0` or when
-///   `len` is smaller than the required `nodename + NUL` size.
+///   `len` is not large enough to append the terminating NUL byte.
 /// - Returns `-1` and sets `errno = EFAULT` when `name` is null and `len > 0`.
 /// - Propagates `uname` syscall failures.
 ///
-/// On these failure paths, this implementation leaves the destination buffer
-/// unchanged.
+/// On `ENAMETOOLONG`, this implementation still copies the longest prefix that
+/// fits before reporting truncation. On `EFAULT` and `uname` failures, the
+/// destination buffer is left unchanged.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gethostname(name: *mut c_char, len: size_t) -> c_int {
   let output_len = usize::try_from(len)
@@ -420,14 +533,17 @@ pub unsafe extern "C" fn gethostname(name: *mut c_char, len: size_t) -> c_int {
 
 /// C ABI entry point for `getpagesize`.
 ///
-/// Returns the system memory page size used by this target profile.
+/// Returns the system memory page size for the current process.
 ///
-/// On `x86_64-unknown-linux-gnu` this implementation intentionally returns the
-/// stable Linux baseline page size (`4096`) and does not mutate `errno`.
+/// On `x86_64-unknown-linux-gnu` this implementation prefers the runtime
+/// `AT_PAGESZ` auxiliary-vector value to match glibc-visible page-size
+/// behavior, then falls back to the Linux baseline page size (`4096`) when the
+/// auxiliary vector is unavailable or malformed. Successful calls do not
+/// mutate `errno`.
 #[must_use]
 #[unsafe(no_mangle)]
-pub const extern "C" fn getpagesize() -> c_int {
-  SYS_PAGESIZE
+pub extern "C" fn getpagesize() -> c_int {
+  page_size()
 }
 
 /// C ABI entry point for `sysinfo`.
@@ -466,13 +582,14 @@ pub unsafe extern "C" fn sysinfo(info: *mut SysInfo) -> c_int {
 ///   `1024` when limit lookup fails or is unbounded. Finite soft limits above
 ///   the representable `c_long` range are clamped to `c_long::MAX`. Any
 ///   nonzero `prlimit64` status is treated as lookup failure.
-/// - `_SC_PAGESIZE` / `_SC_PAGE_SIZE` (`30`)
+/// - `_SC_PAGESIZE` / `_SC_PAGE_SIZE` (`30`): runtime page size from
+///   `AT_PAGESZ` when available, otherwise the Linux baseline `4096`
 /// - `_SC_NPROCESSORS_CONF` (`83`): configured CPUs (from Linux
 ///   `/sys/devices/system/cpu/possible`, then `/sys/devices/system/cpu/present`,
 ///   or online fallback when sysfs data is unavailable or malformed)
-/// - `_SC_NPROCESSORS_ONLN` (`84`): online CPUs visible to the current process.
-///   Uses `sched_getaffinity` and retries with larger affinity masks when the
-///   kernel reports `EINVAL` for undersized buffers.
+/// - `_SC_NPROCESSORS_ONLN` (`84`): system-wide online CPU count from Linux
+///   `/sys/devices/system/cpu/online`, then `/proc/stat`, with
+///   `sched_getaffinity` as a late fallback when those sources are unavailable.
 ///
 /// On success, returns a nonnegative value and leaves `errno` unchanged.
 /// `_SC_OPEN_MAX` may legitimately return `0` when the current soft
@@ -485,7 +602,7 @@ pub extern "C" fn sysconf(name: c_int) -> c_long {
   match name {
     _SC_CLK_TCK => CLK_TCK_VALUE,
     _SC_OPEN_MAX => open_max_value(),
-    _SC_PAGESIZE => c_long::from(SYS_PAGESIZE),
+    name if name == _SC_PAGESIZE || name == _SC_PAGE_SIZE => c_long::from(page_size()),
     _SC_NPROCESSORS_CONF => configured_processor_count(),
     _SC_NPROCESSORS_ONLN => online_processor_count(),
     _ => {
@@ -504,8 +621,17 @@ mod tests {
     MAX_SCHED_AFFINITY_BYTES, OPEN_MAX_FALLBACK_VALUE, RLIM_INFINITY, UTSNAME_FIELD_LEN,
     UTSNAME_MAX_PAYLOAD_LEN, configured_processor_count_with, nodename_payload_len,
     online_processor_count_with_retries, open_max_from_soft_limit, open_max_value_with,
-    parse_cpu_range_list, write_nodename,
+    parse_cpu_range_list, parse_page_size_from_auxv_bytes, write_nodename,
   };
+
+  fn encode_auxv_entry(key: usize, value: usize) -> Vec<u8> {
+    let mut encoded = Vec::new();
+
+    encoded.extend_from_slice(&key.to_ne_bytes());
+    encoded.extend_from_slice(&value.to_ne_bytes());
+
+    encoded
+  }
 
   #[test]
   fn parse_cpu_range_list_accepts_single_values_and_ranges() {
@@ -519,6 +645,32 @@ mod tests {
   #[test]
   fn parse_cpu_range_list_accepts_single_maximum_cpu_index() {
     assert_eq!(parse_cpu_range_list(&usize::MAX.to_string()), Some(1));
+  }
+
+  #[test]
+  fn parse_page_size_from_auxv_bytes_reads_positive_at_pagesz_entry() {
+    let mut auxv = Vec::new();
+
+    auxv.extend_from_slice(&encode_auxv_entry(1, 123));
+    auxv.extend_from_slice(&encode_auxv_entry(6, 16_384));
+    auxv.extend_from_slice(&encode_auxv_entry(0, 0));
+
+    assert_eq!(parse_page_size_from_auxv_bytes(&auxv), Some(16_384));
+  }
+
+  #[test]
+  fn parse_page_size_from_auxv_bytes_rejects_zero_and_truncated_entries() {
+    let mut zero_page_size = Vec::new();
+
+    zero_page_size.extend_from_slice(&encode_auxv_entry(6, 0));
+    zero_page_size.extend_from_slice(&encode_auxv_entry(0, 0));
+
+    let mut truncated = encode_auxv_entry(6, 8_192);
+
+    truncated.pop();
+
+    assert_eq!(parse_page_size_from_auxv_bytes(&zero_page_size), None);
+    assert_eq!(parse_page_size_from_auxv_bytes(&truncated), None);
   }
 
   #[test]
@@ -584,7 +736,22 @@ mod tests {
   }
 
   #[test]
-  fn write_nodename_rejects_short_buffer_without_mutation() {
+  fn write_nodename_truncates_short_buffer_and_reports_enametoolong() {
+    let mut nodename = [c_char::from_ne_bytes([b'a']); UTSNAME_FIELD_LEN];
+
+    nodename[3] = 0;
+
+    let mut output = [c_char::from_ne_bytes([b'z']); 2];
+
+    assert_eq!(
+      write_nodename(&mut output, &nodename),
+      Err(crate::abi::errno::ENAMETOOLONG)
+    );
+    assert_eq!(output, [c_char::from_ne_bytes([b'a']); 2]);
+  }
+
+  #[test]
+  fn write_nodename_exact_payload_buffer_omits_terminating_nul_and_reports_enametoolong() {
     let mut nodename = [c_char::from_ne_bytes([b'a']); UTSNAME_FIELD_LEN];
 
     nodename[3] = 0;
@@ -595,11 +762,7 @@ mod tests {
       write_nodename(&mut output, &nodename),
       Err(crate::abi::errno::ENAMETOOLONG)
     );
-    assert!(
-      output
-        .iter()
-        .all(|&byte| byte == c_char::from_ne_bytes([b'z']))
-    );
+    assert_eq!(output, [c_char::from_ne_bytes([b'a']); 3]);
   }
 
   #[test]

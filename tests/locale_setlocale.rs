@@ -74,6 +74,10 @@ const fn as_c_ptr(bytes: &[u8]) -> *const c_char {
   bytes.as_ptr().cast::<c_char>()
 }
 
+fn index_to_c_int(index: usize) -> c_int {
+  c_int::try_from(index).unwrap_or_else(|_| panic!("index out of c_int range: {index}"))
+}
+
 fn read_errno() -> c_int {
   // SAFETY: `__errno_location` returns writable TLS errno storage for the
   // current thread. Reading a single `c_int` is valid.
@@ -2615,7 +2619,7 @@ fn setlocale_empty_lc_all_with_unsupported_category_variable_rejection_then_quer
       "LC_ALL should accept baseline C locale before unsupported {variable} rejection checks",
     );
 
-    let rejection_errno = 4500 + index as c_int;
+    let rejection_errno = 4500 + index_to_c_int(index);
 
     write_errno(rejection_errno);
 
@@ -2628,7 +2632,7 @@ fn setlocale_empty_lc_all_with_unsupported_category_variable_rejection_then_quer
     );
     assert_eq!(read_errno(), rejection_errno);
 
-    let query_errno = 4550 + index as c_int;
+    let query_errno = 4550 + index_to_c_int(index);
 
     write_errno(query_errno);
 
@@ -2668,7 +2672,7 @@ fn setlocale_empty_lc_all_with_non_utf8_category_variable_rejection_then_query_p
       "LC_ALL should accept baseline C locale before non-UTF-8 {variable} rejection checks",
     );
 
-    let rejection_errno = 4600 + index as c_int;
+    let rejection_errno = 4600 + index_to_c_int(index);
 
     write_errno(rejection_errno);
 
@@ -2681,7 +2685,7 @@ fn setlocale_empty_lc_all_with_non_utf8_category_variable_rejection_then_query_p
     );
     assert_eq!(read_errno(), rejection_errno);
 
-    let query_errno = 4650 + index as c_int;
+    let query_errno = 4650 + index_to_c_int(index);
 
     write_errno(query_errno);
 
@@ -2722,7 +2726,7 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_unsupported_lang_reje
       "LC_ALL should accept baseline C locale before empty {variable} + unsupported LANG rejection checks",
     );
 
-    let rejection_errno = 4700 + index as c_int;
+    let rejection_errno = 4700 + index_to_c_int(index);
 
     write_errno(rejection_errno);
 
@@ -2735,7 +2739,7 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_unsupported_lang_reje
     );
     assert_eq!(read_errno(), rejection_errno);
 
-    let query_errno = 4750 + index as c_int;
+    let query_errno = 4750 + index_to_c_int(index);
 
     write_errno(query_errno);
 
@@ -2776,7 +2780,7 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_non_utf8_lang_rejecti
       "LC_ALL should accept baseline C locale before empty {variable} + non-UTF-8 LANG rejection checks",
     );
 
-    let rejection_errno = 4800 + index as c_int;
+    let rejection_errno = 4800 + index_to_c_int(index);
 
     write_errno(rejection_errno);
 
@@ -2789,7 +2793,7 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_non_utf8_lang_rejecti
     );
     assert_eq!(read_errno(), rejection_errno);
 
-    let query_errno = 4850 + index as c_int;
+    let query_errno = 4850 + index_to_c_int(index);
 
     write_errno(query_errno);
 
@@ -2821,7 +2825,7 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_supported_lang_preser
     set_locale_environment(variable, "");
     set_locale_environment("LANG", "POSIX");
 
-    let expected_errno = 4900 + index as c_int;
+    let expected_errno = 4900 + index_to_c_int(index);
 
     write_errno(expected_errno);
 
@@ -2852,7 +2856,7 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_unset_lang_preserves_
 
     set_locale_environment(variable, "");
 
-    let expected_errno = 5000 + index as c_int;
+    let expected_errno = 5000 + index_to_c_int(index);
 
     write_errno(expected_errno);
 
@@ -2884,7 +2888,7 @@ fn setlocale_empty_lc_all_with_empty_category_variable_and_empty_lang_preserves_
     set_locale_environment(variable, "");
     set_locale_environment("LANG", "");
 
-    let expected_errno = 5100 + index as c_int;
+    let expected_errno = 5100 + index_to_c_int(index);
 
     write_errno(expected_errno);
 

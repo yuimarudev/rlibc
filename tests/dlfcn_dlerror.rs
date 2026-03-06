@@ -1,9 +1,9 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
+use rlibc::abi::errno::EINVAL;
 use rlibc::dlfcn::{RTLD_LAZY, RTLD_NOW, dlclose, dlerror, dlopen, dlsym};
 use rlibc::errno::__errno_location;
 use std::ffi::{CStr, CString};
-use std::path::PathBuf;
 use std::{fs, thread};
 
 const RTLD_NEXT: *mut c_void = (-1_isize) as *mut c_void;
@@ -42,24 +42,16 @@ fn c_string(input: &str) -> CString {
     .unwrap_or_else(|_| unreachable!("test literals must not include interior NUL bytes"))
 }
 
-fn first_loaded_shared_object() -> Option<PathBuf> {
-  let maps = fs::read_to_string("/proc/self/maps").ok()?;
+fn dlopen_proc_self_exe(flags: c_int) -> *mut c_void {
+  let proc_self_exe = c_string("/proc/self/exe");
 
-  for line in maps.lines() {
-    let path = line.split_ascii_whitespace().last()?;
+  // SAFETY: `/proc/self/exe` path is a valid NUL-terminated C string.
+  unsafe { dlopen(proc_self_exe.as_ptr(), flags) }
+}
 
-    if !path.starts_with('/') || !path.contains(".so") {
-      continue;
-    }
-
-    let candidate = PathBuf::from(path);
-
-    if candidate.is_file() {
-      return Some(candidate);
-    }
-  }
-
-  None
+fn dlopen_main_program(flags: c_int) -> *mut c_void {
+  // SAFETY: null filename requests the main-program loader handle.
+  unsafe { dlopen(ptr::null(), flags) }
 }
 
 #[test]
@@ -235,6 +227,94 @@ fn dlerror_pending_message_survives_successful_dlsym_with_rtld_next_and_preserve
 }
 
 #[test]
+fn dlerror_pending_message_survives_successful_rtld_next_flockfile_dlsym_and_preserves_errno() {
+  clear_pending_dlerror();
+
+  assert_eq!(dlclose(ptr::null_mut()), -1);
+  write_errno(4343);
+
+  // SAFETY: `RTLD_NEXT` sentinel and symbol pointer satisfy the C ABI contract.
+  let resolved = unsafe { dlsym(RTLD_NEXT, c"flockfile".as_ptr()) };
+
+  assert!(
+    !resolved.is_null(),
+    "dlsym should resolve flockfile for RTLD_NEXT",
+  );
+  assert_eq!(
+    read_errno(),
+    4343,
+    "successful RTLD_NEXT flockfile dlsym should preserve errno while pending dlerror exists",
+  );
+
+  let message = take_dlerror_message()
+    .expect("successful RTLD_NEXT flockfile dlsym should not clear a pre-existing pending dlerror");
+
+  assert!(
+    message.contains("invalid dynamic-loader handle"),
+    "unexpected preserved dlerror message: {message}",
+  );
+  assert_eq!(
+    read_errno(),
+    4343,
+    "reading pending dlerror must preserve errno",
+  );
+  assert!(
+    take_dlerror_message().is_none(),
+    "second dlerror call must clear pending state",
+  );
+  assert_eq!(
+    read_errno(),
+    4343,
+    "clearing pending dlerror must preserve errno",
+  );
+}
+
+#[test]
+fn dlerror_pending_message_survives_successful_rtld_next_host_first_malloc_dlsym_and_preserves_errno()
+ {
+  clear_pending_dlerror();
+
+  assert_eq!(dlclose(ptr::null_mut()), -1);
+  write_errno(4444);
+
+  // SAFETY: `RTLD_NEXT` sentinel and symbol pointer satisfy the C ABI contract.
+  let resolved = unsafe { dlsym(RTLD_NEXT, c"malloc".as_ptr()) };
+
+  assert!(
+    !resolved.is_null(),
+    "dlsym should resolve malloc for RTLD_NEXT",
+  );
+  assert_eq!(
+    read_errno(),
+    4444,
+    "successful host-first RTLD_NEXT malloc dlsym should preserve errno while pending dlerror exists",
+  );
+
+  let message = take_dlerror_message().expect(
+    "successful host-first RTLD_NEXT malloc dlsym should not clear a pre-existing pending dlerror",
+  );
+
+  assert!(
+    message.contains("invalid dynamic-loader handle"),
+    "unexpected preserved dlerror message: {message}",
+  );
+  assert_eq!(
+    read_errno(),
+    4444,
+    "reading pending dlerror must preserve errno",
+  );
+  assert!(
+    take_dlerror_message().is_none(),
+    "second dlerror call must clear pending state",
+  );
+  assert_eq!(
+    read_errno(),
+    4444,
+    "clearing pending dlerror must preserve errno",
+  );
+}
+
+#[test]
 fn dlerror_pending_message_survives_successful_rtld_next_dlsym_then_dlopen_and_dlclose_and_preserves_errno()
  {
   clear_pending_dlerror();
@@ -255,18 +335,14 @@ fn dlerror_pending_message_survives_successful_rtld_next_dlsym_then_dlopen_and_d
     "successful RTLD_NEXT dlsym should preserve errno while pending dlerror exists",
   );
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
+  let proc_self_exe = c_string("/proc/self/exe");
 
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  // SAFETY: `/proc/self/exe` path is a valid NUL-terminated C string.
+  let handle = unsafe { dlopen(proc_self_exe.as_ptr().cast::<c_char>(), RTLD_NOW) };
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "dlopen should succeed for /proc/self/exe"
   );
   assert_eq!(
     read_errno(),
@@ -456,18 +532,11 @@ fn dlerror_pending_message_survives_successful_dlopen() {
   assert_eq!(dlclose(ptr::null_mut()), -1);
   write_errno(4242);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let handle = dlopen_proc_self_exe(RTLD_NOW);
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "dlopen should succeed for /proc/self/exe"
   );
   assert_eq!(
     read_errno(),
@@ -502,24 +571,17 @@ fn dlerror_pending_message_survives_successful_dlopen() {
 }
 
 #[test]
-fn dlerror_pending_message_survives_successful_dlopen_lazy_and_preserves_errno() {
+fn dlerror_pending_message_survives_successful_main_program_dlopen_lazy_and_preserves_errno() {
   clear_pending_dlerror();
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
   write_errno(4242);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_LAZY) };
+  let handle = dlopen_main_program(RTLD_LAZY);
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "main-program dlopen should succeed for null filename",
   );
   assert_eq!(
     read_errno(),
@@ -554,24 +616,18 @@ fn dlerror_pending_message_survives_successful_dlopen_lazy_and_preserves_errno()
 }
 
 #[test]
-fn dlerror_pending_message_survives_successful_dlopen_then_dlsym_and_preserves_errno() {
+fn dlerror_pending_message_survives_successful_main_program_dlopen_then_handle_dlsym_and_preserves_errno()
+ {
   clear_pending_dlerror();
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
   write_errno(4242);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let handle = dlopen_main_program(RTLD_NOW);
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "main-program dlopen should succeed for null filename",
   );
   assert_eq!(
     read_errno(),
@@ -579,12 +635,12 @@ fn dlerror_pending_message_survives_successful_dlopen_then_dlsym_and_preserves_e
     "successful dlopen should preserve errno while pending dlerror exists",
   );
 
-  // SAFETY: null handle denotes RTLD_DEFAULT and symbol string is NUL-terminated.
-  let resolved = unsafe { dlsym(ptr::null_mut(), c"getenv".as_ptr()) };
+  // SAFETY: `handle` came from `dlopen` and the symbol pointer is NUL-terminated.
+  let resolved = unsafe { dlsym(handle, c"dlopen".as_ptr()) };
 
   assert!(
     !resolved.is_null(),
-    "dlsym should resolve getenv for RTLD_DEFAULT",
+    "dlsym should resolve dlopen for the main-program handle",
   );
   assert_eq!(
     read_errno(),
@@ -619,23 +675,16 @@ fn dlerror_pending_message_survives_successful_dlopen_then_dlsym_and_preserves_e
 }
 
 #[test]
-fn dlerror_reopened_handle_missing_symbol_replaces_pending_message() {
+fn dlerror_reopened_proc_self_exe_handle_missing_symbol_replaces_pending_message() {
   clear_pending_dlerror();
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let first_handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let first_handle = dlopen_proc_self_exe(RTLD_NOW);
 
   assert!(
     !first_handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "dlopen should succeed for /proc/self/exe",
   );
   assert_eq!(
     dlclose(first_handle),
@@ -643,13 +692,11 @@ fn dlerror_reopened_handle_missing_symbol_replaces_pending_message() {
     "dlclose should release first handle"
   );
 
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let reopened_handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let reopened_handle = dlopen_proc_self_exe(RTLD_NOW);
 
   assert!(
     !reopened_handle.is_null(),
-    "reopened dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "reopened dlopen should succeed for /proc/self/exe",
   );
 
   write_errno(9191);
@@ -685,21 +732,14 @@ fn dlerror_reopened_handle_missing_symbol_replaces_pending_message() {
 }
 
 #[test]
-fn dlerror_stays_empty_after_successful_dlopen() {
+fn dlerror_stays_empty_after_successful_proc_self_exe_dlopen() {
   clear_pending_dlerror();
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let handle = dlopen_proc_self_exe(RTLD_NOW);
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "dlopen should succeed for /proc/self/exe",
   );
   assert!(
     take_dlerror_message().is_none(),
@@ -710,21 +750,14 @@ fn dlerror_stays_empty_after_successful_dlopen() {
 }
 
 #[test]
-fn dlerror_stays_empty_after_successful_dlclose() {
+fn dlerror_stays_empty_after_successful_proc_self_exe_dlclose() {
   clear_pending_dlerror();
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let handle = dlopen_proc_self_exe(RTLD_NOW);
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "dlopen should succeed for /proc/self/exe",
   );
   assert!(
     take_dlerror_message().is_none(),
@@ -739,23 +772,16 @@ fn dlerror_stays_empty_after_successful_dlclose() {
 }
 
 #[test]
-fn dlerror_pending_message_survives_successful_dlclose_and_preserves_errno() {
+fn dlerror_pending_message_survives_successful_main_program_dlclose_and_preserves_errno() {
   clear_pending_dlerror();
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let handle = dlopen_main_program(RTLD_NOW);
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "main-program dlopen should succeed for null filename",
   );
 
   write_errno(6262);
@@ -781,23 +807,17 @@ fn dlerror_pending_message_survives_successful_dlclose_and_preserves_errno() {
 }
 
 #[test]
-fn dlerror_closed_handle_dlclose_failure_replaces_pending_message_and_preserves_errno() {
+fn dlerror_closed_proc_self_exe_handle_dlclose_failure_replaces_pending_message_and_preserves_errno()
+ {
   clear_pending_dlerror();
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let handle = dlopen_proc_self_exe(RTLD_NOW);
 
   assert!(
     !handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "dlopen should succeed for /proc/self/exe",
   );
   assert_eq!(
     dlclose(handle),
@@ -828,24 +848,20 @@ fn dlerror_closed_handle_dlclose_failure_replaces_pending_message_and_preserves_
 }
 
 #[test]
-fn dlerror_pending_message_isolated_from_child_successful_dlopen() {
+fn dlerror_pending_message_isolated_from_child_successful_main_program_dlopen() {
   clear_pending_dlerror();
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let shared_object_path_text = shared_object_path.to_string_lossy().into_owned();
-  let child = thread::spawn(move || {
+  let child = thread::spawn(|| {
     clear_pending_dlerror();
 
-    let path_cstr = CString::new(shared_object_path_text.as_bytes())
-      .expect("shared object path must not contain interior NUL");
+    let handle = dlopen_main_program(RTLD_NOW);
 
-    // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-    let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
-
-    assert!(!handle.is_null(), "child dlopen should succeed");
+    assert!(
+      !handle.is_null(),
+      "child main-program dlopen should succeed"
+    );
 
     let child_message_after_success = take_dlerror_message();
 
@@ -878,27 +894,24 @@ fn dlerror_pending_message_isolated_from_child_successful_dlopen() {
 }
 
 #[test]
-fn dlerror_pending_message_isolated_from_child_successful_dlopen_and_preserves_main_errno() {
+fn dlerror_pending_message_isolated_from_child_successful_main_program_dlopen_and_preserves_main_errno()
+ {
   clear_pending_dlerror();
   write_errno(4242);
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
   assert_eq!(read_errno(), 4242, "main-thread errno must be preserved");
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let shared_object_path_text = shared_object_path.to_string_lossy().into_owned();
-  let child = thread::spawn(move || {
+  let child = thread::spawn(|| {
     clear_pending_dlerror();
     write_errno(3131);
 
-    let path_cstr = CString::new(shared_object_path_text.as_bytes())
-      .expect("shared object path must not contain interior NUL");
+    let handle = dlopen_main_program(RTLD_NOW);
 
-    // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-    let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
-
-    assert!(!handle.is_null(), "child dlopen should succeed");
+    assert!(
+      !handle.is_null(),
+      "child main-program dlopen should succeed"
+    );
     assert_eq!(
       read_errno(),
       3131,
@@ -952,27 +965,24 @@ fn dlerror_pending_message_isolated_from_child_successful_dlopen_and_preserves_m
 }
 
 #[test]
-fn dlerror_pending_message_isolated_from_child_successful_dlclose_and_preserves_main_errno() {
+fn dlerror_pending_message_isolated_from_child_successful_main_program_dlclose_and_preserves_main_errno()
+ {
   clear_pending_dlerror();
   write_errno(4242);
 
   assert_eq!(dlclose(ptr::null_mut()), -1);
   assert_eq!(read_errno(), 4242, "main-thread errno must be preserved");
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let shared_object_path_text = shared_object_path.to_string_lossy().into_owned();
-  let child = thread::spawn(move || {
+  let child = thread::spawn(|| {
     clear_pending_dlerror();
     write_errno(3131);
 
-    let path_cstr = CString::new(shared_object_path_text.as_bytes())
-      .expect("shared object path must not contain interior NUL");
+    let handle = dlopen_main_program(RTLD_NOW);
 
-    // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-    let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
-
-    assert!(!handle.is_null(), "child dlopen should succeed");
+    assert!(
+      !handle.is_null(),
+      "child main-program dlopen should succeed"
+    );
     assert!(
       take_dlerror_message().is_none(),
       "child successful dlopen must not create dlerror state",
@@ -1027,19 +1037,17 @@ fn dlerror_pending_message_isolated_from_child_successful_dlclose_and_preserves_
 }
 
 #[test]
-fn dlerror_pending_message_isolated_from_child_failed_dlclose_and_preserves_main_errno() {
+fn dlerror_pending_message_isolated_from_child_failed_main_program_dlclose_and_preserves_main_errno()
+ {
   clear_pending_dlerror();
   write_errno(4242);
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let path_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
+  let handle = dlopen_main_program(RTLD_NOW);
 
-  // SAFETY: `path_cstr` is a valid NUL-terminated C string.
-  let handle = unsafe { dlopen(path_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
-
-  assert!(!handle.is_null(), "main-thread dlopen should succeed");
+  assert!(
+    !handle.is_null(),
+    "main-thread main-program dlopen should succeed"
+  );
   assert_eq!(
     dlclose(handle),
     0,
@@ -1488,21 +1496,76 @@ fn dlerror_reports_dlopen_invalid_flags_failure() {
 }
 
 #[test]
-fn dlerror_reports_dlopen_null_filename_failure() {
+fn dlerror_stays_empty_after_successful_dlopen_null_filename() {
   clear_pending_dlerror();
+  write_errno(5050);
 
-  // SAFETY: null pointer is intentional to validate input checking.
+  // SAFETY: null filename requests the main-program loader handle.
   let handle = unsafe { dlopen(ptr::null(), RTLD_NOW) };
-  let message = take_dlerror_message().expect("null filename failure should set dlerror message");
 
-  assert!(handle.is_null(), "null filename must fail");
   assert!(
-    message.contains("path pointer is null"),
-    "unexpected dlerror message: {message}",
+    !handle.is_null(),
+    "null filename should resolve main-program handle"
   );
+  assert_eq!(read_errno(), 5050, "successful dlopen must preserve errno");
   assert!(
     take_dlerror_message().is_none(),
-    "second dlerror call must clear pending state",
+    "successful null-filename dlopen must not create dlerror",
+  );
+  assert_eq!(dlclose(handle), 0, "main-program handle should be closable");
+}
+
+#[test]
+fn dlerror_stays_empty_after_successful_main_program_handle_dlsym_lookup() {
+  clear_pending_dlerror();
+  write_errno(5150);
+
+  // SAFETY: null filename requests the main-program loader handle.
+  let handle = unsafe { dlopen(ptr::null(), RTLD_NOW) };
+
+  assert!(!handle.is_null(), "main-program handle should resolve");
+  assert_eq!(read_errno(), 5150, "successful dlopen must preserve errno");
+
+  // SAFETY: handle and symbol pointer satisfy the dlsym C ABI contract.
+  let resolved = unsafe { dlsym(handle, c"dlopen".as_ptr()) };
+
+  assert!(
+    !resolved.is_null(),
+    "main-program handle should resolve dlopen symbol",
+  );
+  assert_eq!(read_errno(), 5150, "successful dlsym must preserve errno");
+  assert!(
+    take_dlerror_message().is_none(),
+    "successful main-program-handle dlsym from clean state must not create dlerror",
+  );
+  assert_eq!(dlclose(handle), 0, "main-program handle should be closable");
+  assert_eq!(read_errno(), 5150, "successful dlclose must preserve errno");
+  assert!(
+    take_dlerror_message().is_none(),
+    "successful main-program-handle dlclose after lookup must not create dlerror",
+  );
+}
+
+#[test]
+fn dlerror_reports_invalid_flags_for_dlopen_null_filename_when_binding_mode_missing() {
+  clear_pending_dlerror();
+
+  // SAFETY: null filename with missing binding mode is intentional for validation.
+  let handle = unsafe { dlopen(ptr::null(), 0) };
+
+  assert!(handle.is_null(), "missing binding mode must fail");
+  assert_eq!(read_errno(), EINVAL);
+
+  let message =
+    take_dlerror_message().expect("invalid null-filename flags should set dlerror message");
+
+  assert!(
+    message.contains("invalid flags"),
+    "unexpected invalid-flags message: {message}",
+  );
+  assert!(
+    !message.contains("path pointer is null"),
+    "null-filename invalid-flags path should report flags error: {message}",
   );
 }
 
@@ -1594,7 +1657,8 @@ fn dlerror_reports_dlopen_missing_path_failure_with_lazy_binding() {
 }
 
 #[test]
-fn dlerror_missing_path_pending_message_survives_successful_dlopen_and_preserves_errno() {
+fn dlerror_missing_path_pending_message_survives_successful_main_program_dlopen_and_preserves_errno()
+ {
   clear_pending_dlerror();
 
   let missing_path =
@@ -1612,18 +1676,11 @@ fn dlerror_missing_path_pending_message_survives_successful_dlopen_and_preserves
     "missing-path dlopen failure should set a non-zero errno",
   );
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let shared_object_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `shared_object_cstr` is a valid NUL-terminated C string.
-  let success_handle = unsafe { dlopen(shared_object_cstr.as_ptr().cast::<c_char>(), RTLD_NOW) };
+  let success_handle = dlopen_main_program(RTLD_NOW);
 
   assert!(
     !success_handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "main-program dlopen should succeed for null filename",
   );
   assert_eq!(
     read_errno(),
@@ -1689,18 +1746,11 @@ fn dlerror_missing_path_pending_message_survives_successful_lazy_dlopen_and_pres
     "missing-path dlopen failure should set a non-zero errno",
   );
 
-  let shared_object_path =
-    first_loaded_shared_object().expect("expected at least one loaded shared object in process");
-  let shared_object_cstr = CString::new(shared_object_path.to_string_lossy().as_bytes())
-    .expect("shared object path must not contain interior NUL");
-
-  // SAFETY: `shared_object_cstr` is a valid NUL-terminated C string.
-  let success_handle = unsafe { dlopen(shared_object_cstr.as_ptr().cast::<c_char>(), RTLD_LAZY) };
+  let success_handle = dlopen_proc_self_exe(RTLD_LAZY);
 
   assert!(
     !success_handle.is_null(),
-    "dlopen should succeed for loaded shared object: {}",
-    shared_object_path.display(),
+    "dlopen should succeed for /proc/self/exe"
   );
   assert_eq!(
     read_errno(),

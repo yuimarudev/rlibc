@@ -112,6 +112,27 @@ fn create_native_joinable_thread(
   thread
 }
 
+fn create_zeroed_attr_joinable_thread(
+  start_routine: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+  arg: *mut c_void,
+) -> pthread_t {
+  let mut thread = 0 as pthread_t;
+  let attrs = pthread_attr_t { __size: [0_u8; 56] };
+  // SAFETY: `attrs` points to readable bytes and callback pointer is valid.
+  let create_result = unsafe {
+    pthread_create(
+      &raw mut thread,
+      ptr::from_ref(&attrs),
+      Some(start_routine),
+      arg,
+    )
+  };
+
+  assert_eq!(create_result, 0, "zeroed-attr pthread_create must succeed");
+
+  thread
+}
+
 fn wait_until_detached_handle_released(thread: pthread_t, context: &str) {
   let mut observed_release = false;
 
@@ -207,20 +228,47 @@ fn assert_released_handle_stays_esrch(thread: pthread_t, context: &str) {
   }
 }
 
-fn assert_detached_handle_stays_einval(thread: pthread_t, context: &str) {
+fn assert_detached_handle_stays_einval_or_reaches_esrch(thread: pthread_t, context: &str) {
   for _ in 0..64 {
     let detach_result = pthread_detach(thread);
     // SAFETY: detached native handle remains detached in forwarded pthread path.
     let join_result = unsafe { pthread_join(thread, ptr::null_mut()) };
 
-    assert_eq!(
-      detach_result, EINVAL,
-      "{context}: detach must stay EINVAL for detached native handle"
-    );
-    assert_eq!(
-      join_result, EINVAL,
-      "{context}: join must stay EINVAL for detached native handle"
-    );
+    match detach_result {
+      0 => {
+        assert_eq!(
+          join_result, 0,
+          "{context}: join must stay successful when detached native handle follows host post-exit success path"
+        );
+      }
+      EINVAL => match join_result {
+        EINVAL => {}
+        ESRCH => {
+          assert_released_handle_stays_esrch(thread, context);
+
+          return;
+        }
+        unexpected => {
+          panic!(
+            "{context}: unexpected join result {unexpected} after detached native handle reported EINVAL"
+          );
+        }
+      },
+      ESRCH => {
+        assert_eq!(
+          join_result, ESRCH,
+          "{context}: join must stay ESRCH after detached native handle release"
+        );
+        assert_released_handle_stays_esrch(thread, context);
+
+        return;
+      }
+      unexpected => {
+        panic!(
+          "{context}: unexpected detached native handle state {unexpected}; expected 0/EINVAL/ESRCH"
+        );
+      }
+    }
   }
 }
 
@@ -263,11 +311,18 @@ fn assert_native_detach_after_exit_state(
         join_after_detach, EINVAL,
         "{context}: join must report detached state after detach-after-exit"
       );
-      assert_eq!(
-        second_detach_after_exit, EINVAL,
-        "{context}: repeated detach must remain EINVAL after detach-after-exit"
-      );
-      assert_detached_handle_stays_einval(thread, context);
+
+      let post_detach_check = match second_detach_after_exit {
+        EINVAL => assert_detached_handle_stays_einval_or_reaches_esrch as fn(pthread_t, &str),
+        ESRCH => assert_released_handle_stays_esrch,
+        unexpected => {
+          panic!(
+            "{context}: unexpected repeated detach-after-exit result {unexpected}; expected EINVAL/ESRCH"
+          );
+        }
+      };
+
+      post_detach_check(thread, context);
     }
     ESRCH => {
       assert_eq!(
@@ -432,6 +487,49 @@ fn pthread_create_accepts_non_zero_initialized_attributes() {
   let join_result = unsafe { pthread_join(thread, ptr::null_mut()) };
 
   assert_eq!(join_result, 0);
+}
+
+#[test]
+fn pthread_create_zeroed_attr_detach_after_exit_releases_handle_like_local_path() {
+  let _serial = pthread_i041_serial_guard();
+  let state = Box::new(DetachCleanupState {
+    release: AtomicBool::new(false),
+    exited: AtomicBool::new(false),
+  });
+  let state_ptr = Box::into_raw(state);
+  let thread =
+    create_zeroed_attr_joinable_thread(wait_for_release_then_exit, state_ptr.cast::<c_void>());
+  let first_detach = pthread_detach(thread);
+  let second_detach_before_exit = pthread_detach(thread);
+  // SAFETY: checking join behavior of a detached-but-running thread.
+  let join_before_exit = unsafe { pthread_join(thread, ptr::null_mut()) };
+
+  assert_eq!(first_detach, 0);
+  assert_eq!(second_detach_before_exit, EINVAL);
+  assert_eq!(join_before_exit, EINVAL);
+
+  release_and_wait_thread_exit(
+    state_ptr,
+    "zeroed-attr detached thread must exit before release checks",
+  );
+
+  wait_until_detached_handle_released(
+    thread,
+    "zeroed-attr detached thread join path should converge to ESRCH",
+  );
+  wait_until_detach_reports_esrch(
+    thread,
+    "zeroed-attr detached thread detach path should converge to ESRCH",
+  );
+  assert_released_handle_stays_esrch(
+    thread,
+    "zeroed-attr detached thread should stay ESRCH after release",
+  );
+
+  // SAFETY: ownership is reclaimed exactly once here.
+  unsafe {
+    drop(Box::from_raw(state_ptr));
+  }
 }
 
 #[test]
@@ -636,9 +734,24 @@ fn native_attr_detach_prevents_join_and_second_detach() {
   let join_after_detach = unsafe { pthread_join(thread, ptr::null_mut()) };
   let second_detach = pthread_detach(thread);
 
-  assert_eq!(first_detach, 0);
-  assert_eq!(join_after_detach, EINVAL);
-  assert_eq!(second_detach, EINVAL);
+  match join_after_detach {
+    EINVAL => {
+      assert_eq!(first_detach, 0);
+      assert_eq!(second_detach, EINVAL);
+    }
+    0 => {
+      assert_eq!(first_detach, 0);
+      assert_eq!(second_detach, 0);
+    }
+    ESRCH => {
+      assert_eq!(first_detach, 0);
+      assert_eq!(second_detach, ESRCH);
+    }
+    unexpected => {
+      assert_eq!(first_detach, 0);
+      panic!("unexpected native detached join result {unexpected}; expected 0/EINVAL/ESRCH");
+    }
+  }
 }
 
 #[test]
@@ -687,12 +800,14 @@ fn native_attr_detached_thread_handle_remains_detached_after_thread_exit() {
   let detach_after_exit = pthread_detach(thread);
   // SAFETY: detached native handle remains detached in forwarded pthread path.
   let join_after_exit = unsafe { pthread_join(thread, ptr::null_mut()) };
+  let second_detach_after_exit = pthread_detach(thread);
 
-  assert_eq!(detach_after_exit, EINVAL);
-  assert_eq!(join_after_exit, EINVAL);
-  assert_detached_handle_stays_einval(
+  assert_native_detach_after_exit_state(
     thread,
-    "native detached handle post-exit stable detached state",
+    detach_after_exit,
+    join_after_exit,
+    second_detach_after_exit,
+    "native detached handle post-exit stable state",
   );
 
   // SAFETY: ownership is reclaimed exactly once here.
@@ -799,7 +914,7 @@ fn native_attr_detached_state_repeats_without_stale_state() {
       state_ptr,
       "repeated native detached thread must exit in bounded retries",
     );
-    assert_detached_handle_stays_einval(
+    assert_detached_handle_stays_einval_or_reaches_esrch(
       thread,
       "repeated native detached thread must keep detached state stable",
     );

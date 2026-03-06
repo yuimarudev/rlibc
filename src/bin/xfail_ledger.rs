@@ -852,6 +852,7 @@ mod tests {
       .duration_since(std::time::UNIX_EPOCH)
       .expect("clock should be after UNIX_EPOCH")
       .as_nanos();
+
     path.push(format!(
       "rlibc_xfail_ledger_{suffix}_{}_{}.csv",
       std::process::id(),

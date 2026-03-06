@@ -9,18 +9,19 @@
 //! Contract notes:
 //! - APIs return pthread-style error numbers directly (`0` on success).
 //! - APIs in this module do not use `errno` for error delivery.
-//! - Process-shared synchronization primitives are not supported yet.
+//! - `PTHREAD_PROCESS_SHARED` attributes are accepted for ABI compatibility,
+//!   but synchronization state remains process-local within this runtime.
 
-use crate::abi::errno::{EAGAIN, EBUSY, EDEADLK, EINVAL, ENOTSUP, EPERM, ESRCH, ETIMEDOUT};
+use crate::abi::errno::{EAGAIN, EBUSY, EDEADLK, EINVAL, EPERM, ESRCH, ETIMEDOUT};
 use crate::abi::types::{c_int, c_long, c_ulong, c_void};
 use crate::time::{CLOCK_REALTIME, clock_gettime, timespec};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_char;
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::Duration;
 
@@ -38,17 +39,21 @@ pub const PTHREAD_PROCESS_PRIVATE: c_int = 0;
 pub const PTHREAD_PROCESS_SHARED: c_int = 1;
 const NATIVE_DETACHED_CACHE_LIMIT: usize = 1024;
 const NATIVE_CONSUMED_CACHE_LIMIT: usize = 1024;
+const DESTROYED_COND_SENTINEL: *mut PthreadCondState = ptr::dangling_mut::<PthreadCondState>();
 const RTLD_NEXT: *mut c_void = (-1_isize) as *mut c_void;
 const PTHREAD_CREATE_NAME: &[u8] = b"pthread_create\0";
-const PTHREAD_JOIN_NAME: &[u8] = b"pthread_join\0";
 const PTHREAD_DETACH_NAME: &[u8] = b"pthread_detach\0";
-const DESTROYED_COND_SENTINEL: *mut PthreadCondState = ptr::dangling_mut::<PthreadCondState>();
+const PTHREAD_JOIN_NAME: &[u8] = b"pthread_join\0";
+const GLIBC_DLSYM_VERSION_CANDIDATES: [&[u8]; 2] = [b"GLIBC_2.34\0", b"GLIBC_2.2.5\0"];
 static NEXT_THREAD_ID: AtomicU64 = AtomicU64::new(1);
 static REGISTRY: LazyLock<Mutex<PthreadRegistry>> =
   LazyLock::new(|| Mutex::new(PthreadRegistry::default()));
 static RWLOCK_REGISTRY: LazyLock<Mutex<HashMap<usize, Arc<PthreadRwlockState>>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
 static COND_LAZY_INIT_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+static HOST_PTHREAD_CREATE: OnceLock<Option<RealPthreadCreate>> = OnceLock::new();
+static HOST_PTHREAD_DETACH: OnceLock<Option<RealPthreadDetach>> = OnceLock::new();
+static HOST_PTHREAD_JOIN: OnceLock<Option<RealPthreadJoin>> = OnceLock::new();
 
 /// Opaque pthread handle type for Linux `x86_64`.
 pub type pthread_t = c_ulong;
@@ -58,8 +63,8 @@ pub type pthread_t = c_ulong;
 /// ABI notes:
 /// - This layout matches glibc's public contract shape:
 ///   a 56-byte payload aligned as `long`.
-/// - Non-null attributes are forwarded to the native pthread runtime for
-///   compatibility with host thread creation paths.
+/// - Non-null attributes are accepted for ABI compatibility and treated as an
+///   opaque payload.
 #[repr(C)]
 pub union pthread_attr_t {
   /// Raw opaque storage.
@@ -99,17 +104,30 @@ pub union pthread_rwlockattr_t {
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
 
+type RealPthreadCreate = unsafe extern "C" fn(
+  *mut pthread_t,
+  *const pthread_attr_t,
+  Option<StartRoutine>,
+  *mut c_void,
+) -> c_int;
+
+type RealPthreadDetach = unsafe extern "C" fn(pthread_t) -> c_int;
+
+type RealPthreadJoin = unsafe extern "C" fn(pthread_t, *mut *mut c_void) -> c_int;
+
 type ThreadResultWord = usize;
 
 enum JoinTarget {
   Local(JoinHandle<ThreadResultWord>),
-  Native,
+  NativeJoinable,
+  NativeDetached,
   UnknownNative,
 }
 
 enum DetachTarget {
   Local(JoinHandle<ThreadResultWord>),
-  Native,
+  NativeJoinable,
+  NativeDetached,
   UnknownNative,
 }
 
@@ -118,6 +136,7 @@ struct PthreadRegistry {
   detached: HashSet<pthread_t>,
   finished: HashSet<pthread_t>,
   joinable: HashMap<pthread_t, JoinHandle<ThreadResultWord>>,
+  local_pending: HashSet<pthread_t>,
   native_detached: HashSet<pthread_t>,
   native_detached_order: VecDeque<pthread_t>,
   native_consumed: HashSet<pthread_t>,
@@ -127,23 +146,17 @@ struct PthreadRegistry {
 
 thread_local! {
   static CURRENT_THREAD_ID: Cell<Option<pthread_t>> = const { Cell::new(None) };
+  static INTERNAL_PTHREAD_FALLBACK: Cell<bool> = const { Cell::new(false) };
+  static RECENT_NATIVE_CREATES: RefCell<Vec<pthread_t>> = const { RefCell::new(Vec::new()) };
 }
 
 #[link(name = "dl")]
 unsafe extern "C" {
+  #[link_name = "dlvsym"]
+  fn host_dlvsym(handle: *mut c_void, symbol: *const c_char, version: *const c_char)
+  -> *mut c_void;
   fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
-
-type RealPthreadCreate = unsafe extern "C" fn(
-  *mut pthread_t,
-  *const pthread_attr_t,
-  Option<StartRoutine>,
-  *mut c_void,
-) -> c_int;
-
-type RealPthreadJoin = unsafe extern "C" fn(pthread_t, *mut *mut c_void) -> c_int;
-
-type RealPthreadDetach = unsafe extern "C" fn(pthread_t) -> c_int;
 
 #[derive(Default)]
 struct PthreadMutexLockState {
@@ -161,8 +174,8 @@ struct PthreadMutexState {
 
 #[derive(Default)]
 struct PthreadCondWaitState {
-  generation: u64,
   waiter_count: usize,
+  pending_wakeups: usize,
 }
 
 struct PthreadCondState {
@@ -175,6 +188,8 @@ struct PthreadRwlockLockState {
   reader_owners: HashMap<ThreadId, usize>,
   total_readers: usize,
   writer_owner: Option<ThreadId>,
+  waiting_readers: usize,
+  waiting_writers: usize,
   destroyed: bool,
 }
 
@@ -195,7 +210,11 @@ pub struct pthread_mutex_t {
 /// POSIX mutex attribute object.
 ///
 /// This implementation supports mutex type selection (`NORMAL`, `ERRORCHECK`,
-/// `RECURSIVE`) and `PTHREAD_PROCESS_PRIVATE` only.
+/// `RECURSIVE`) plus both `PTHREAD_PROCESS_PRIVATE` and
+/// `PTHREAD_PROCESS_SHARED` attribute values.
+///
+/// `PTHREAD_PROCESS_SHARED` is accepted for ABI compatibility, but the mutex
+/// state remains process-local and does not coordinate across processes.
 #[repr(C)]
 pub struct pthread_mutexattr_t {
   mutex_type: c_int,
@@ -220,7 +239,12 @@ pub struct pthread_cond_t {
 
 /// POSIX condition-variable attribute object.
 ///
-/// This implementation supports only `PTHREAD_PROCESS_PRIVATE`.
+/// This implementation accepts both `PTHREAD_PROCESS_PRIVATE` and
+/// `PTHREAD_PROCESS_SHARED`.
+///
+/// `PTHREAD_PROCESS_SHARED` is accepted for ABI compatibility, but the
+/// condition-variable state remains process-local and does not coordinate
+/// across processes.
 #[repr(C)]
 pub struct pthread_condattr_t {
   pshared: c_int,
@@ -228,6 +252,14 @@ pub struct pthread_condattr_t {
 }
 
 impl PthreadRegistry {
+  fn handle_local_thread_exit(&mut self, thread: pthread_t) {
+    if self.detached.remove(&thread) {
+      // Detached threads are tracked only while they may still be running.
+    } else if self.joinable.contains_key(&thread) || self.local_pending.contains(&thread) {
+      self.finished.insert(thread);
+    }
+  }
+
   fn mark_native_detached(&mut self, thread: pthread_t) {
     self.clear_native_consumed(thread);
     self.native_joinable.remove(&thread);
@@ -321,10 +353,24 @@ impl PthreadRegistry {
     join_result: c_int,
     restore_joinable_on_error: bool,
   ) -> c_int {
-    if join_result == 0 || join_result == ESRCH {
+    let was_detached = self.native_detached.contains(&thread);
+
+    if join_result == 0 {
+      if was_detached {
+        self.mark_native_detached(thread);
+
+        return 0;
+      }
+
       self.mark_native_consumed(thread);
 
-      return join_result;
+      return 0;
+    }
+
+    if join_result == ESRCH {
+      self.mark_native_consumed(thread);
+
+      return ESRCH;
     }
 
     if join_result == EINVAL {
@@ -424,6 +470,7 @@ fn allocate_thread_id(registry: &PthreadRegistry) -> pthread_t {
     }
 
     if registry.joinable.contains_key(&candidate)
+      || registry.local_pending.contains(&candidate)
       || registry.detached.contains(&candidate)
       || registry.native_joinable.contains(&candidate)
       || registry.native_detached.contains(&candidate)
@@ -440,66 +487,217 @@ fn lock_registry() -> MutexGuard<'static, PthreadRegistry> {
   REGISTRY.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn resolve_real_pthread_create() -> Option<RealPthreadCreate> {
-  // SAFETY: symbol name is NUL-terminated and `RTLD_NEXT` is a documented lookup handle.
-  let symbol_ptr = unsafe { dlsym(RTLD_NEXT, PTHREAD_CREATE_NAME.as_ptr().cast()) };
+fn is_zeroed_attr_payload(attr: *const pthread_attr_t) -> bool {
+  // SAFETY: callers only pass non-null pointers and `pthread_create` contract
+  // requires readable attribute bytes when `attr` is non-null.
+  let payload = unsafe {
+    core::slice::from_raw_parts(attr.cast::<u8>(), core::mem::size_of::<pthread_attr_t>())
+  };
 
-  if symbol_ptr.is_null() {
-    return None;
-  }
-
-  // SAFETY: `symbol_ptr` resolves to libc's `pthread_create`.
-  Some(unsafe { core::mem::transmute::<*mut c_void, RealPthreadCreate>(symbol_ptr) })
+  payload.iter().all(|byte| *byte == 0)
 }
 
-fn resolve_real_pthread_join() -> Option<RealPthreadJoin> {
-  // SAFETY: symbol name is NUL-terminated and `RTLD_NEXT` is a documented lookup handle.
-  let symbol_ptr = unsafe { dlsym(RTLD_NEXT, PTHREAD_JOIN_NAME.as_ptr().cast()) };
+fn should_forward_internal_pthread_call() -> bool {
+  INTERNAL_PTHREAD_FALLBACK.with(Cell::get)
+}
+
+fn remember_recent_native_create(thread: pthread_t) {
+  RECENT_NATIVE_CREATES.with(|recent| {
+    let mut recent = recent.borrow_mut();
+
+    if recent.contains(&thread) {
+      return;
+    }
+
+    recent.push(thread);
+  });
+}
+
+fn clear_recent_native_create(thread: pthread_t) {
+  RECENT_NATIVE_CREATES.with(|recent| {
+    let mut recent = recent.borrow_mut();
+
+    if let Some(position) = recent.iter().position(|candidate| *candidate == thread) {
+      recent.remove(position);
+    }
+  });
+}
+
+fn with_internal_pthread_fallback<T>(f: impl FnOnce() -> T) -> T {
+  INTERNAL_PTHREAD_FALLBACK.with(|slot| {
+    let previous = slot.replace(true);
+    let output = f();
+
+    slot.set(previous);
+
+    output
+  })
+}
+
+fn resolve_host_symbol(symbol_name: &[u8]) -> Option<*mut c_void> {
+  let versioned_symbol_ptr = GLIBC_DLSYM_VERSION_CANDIDATES.iter().find_map(|version| {
+    // SAFETY: symbol/version names are static NUL-terminated strings.
+    let resolved = unsafe {
+      host_dlvsym(
+        RTLD_NEXT,
+        symbol_name.as_ptr().cast(),
+        version.as_ptr().cast(),
+      )
+    };
+
+    if resolved.is_null() {
+      return None;
+    }
+
+    Some(resolved)
+  });
+  let symbol_ptr = versioned_symbol_ptr.unwrap_or_else(|| {
+    // SAFETY: symbol name is NUL-terminated and `RTLD_NEXT` is a documented lookup handle.
+    unsafe { dlsym(RTLD_NEXT, symbol_name.as_ptr().cast()) }
+  });
 
   if symbol_ptr.is_null() {
     return None;
   }
 
-  // SAFETY: `symbol_ptr` resolves to libc's `pthread_join`.
-  Some(unsafe { core::mem::transmute::<*mut c_void, RealPthreadJoin>(symbol_ptr) })
+  Some(symbol_ptr)
+}
+
+fn resolve_real_pthread_create() -> Option<RealPthreadCreate> {
+  *HOST_PTHREAD_CREATE.get_or_init(|| {
+    let symbol = resolve_host_symbol(PTHREAD_CREATE_NAME)?;
+    let local_symbol = pthread_create
+      as unsafe extern "C" fn(
+        *mut pthread_t,
+        *const pthread_attr_t,
+        Option<StartRoutine>,
+        *mut c_void,
+      ) -> c_int;
+
+    if symbol == local_symbol as *const () as *mut c_void {
+      return None;
+    }
+
+    // SAFETY: `symbol` was returned by `dlsym` for `pthread_create` and is
+    // invoked using the matching C ABI signature.
+    Some(unsafe { core::mem::transmute::<*mut c_void, RealPthreadCreate>(symbol) })
+  })
 }
 
 fn resolve_real_pthread_detach() -> Option<RealPthreadDetach> {
-  // SAFETY: symbol name is NUL-terminated and `RTLD_NEXT` is a documented lookup handle.
-  let symbol_ptr = unsafe { dlsym(RTLD_NEXT, PTHREAD_DETACH_NAME.as_ptr().cast()) };
+  *HOST_PTHREAD_DETACH.get_or_init(|| {
+    let symbol = resolve_host_symbol(PTHREAD_DETACH_NAME)?;
+    let local_symbol = pthread_detach as extern "C" fn(pthread_t) -> c_int;
 
-  if symbol_ptr.is_null() {
-    return None;
-  }
+    if symbol == local_symbol as *const () as *mut c_void {
+      return None;
+    }
 
-  // SAFETY: `symbol_ptr` resolves to libc's `pthread_detach`.
-  Some(unsafe { core::mem::transmute::<*mut c_void, RealPthreadDetach>(symbol_ptr) })
+    // SAFETY: `symbol` was returned by `dlsym` for `pthread_detach` and is
+    // invoked using the matching C ABI signature.
+    Some(unsafe { core::mem::transmute::<*mut c_void, RealPthreadDetach>(symbol) })
+  })
 }
 
-fn forward_pthread_create(
+fn resolve_real_pthread_join() -> Option<RealPthreadJoin> {
+  *HOST_PTHREAD_JOIN.get_or_init(|| {
+    let symbol = resolve_host_symbol(PTHREAD_JOIN_NAME)?;
+    let local_symbol = pthread_join as unsafe extern "C" fn(pthread_t, *mut *mut c_void) -> c_int;
+
+    if symbol == local_symbol as *const () as *mut c_void {
+      return None;
+    }
+
+    // SAFETY: `symbol` was returned by `dlsym` for `pthread_join` and is
+    // invoked using the matching C ABI signature.
+    Some(unsafe { core::mem::transmute::<*mut c_void, RealPthreadJoin>(symbol) })
+  })
+}
+
+unsafe fn forward_pthread_create(
   thread: *mut pthread_t,
   attr: *const pthread_attr_t,
   start_routine: Option<StartRoutine>,
   arg: *mut c_void,
-) -> Option<c_int> {
-  let real_create = resolve_real_pthread_create()?;
+) -> c_int {
+  let Some(real_pthread_create) = resolve_real_pthread_create() else {
+    return EAGAIN;
+  };
 
-  // SAFETY: pointer/value contracts are forwarded directly to libc pthread ABI.
-  Some(unsafe { real_create(thread, attr, start_routine, arg) })
+  // SAFETY: forwarding preserves libc ABI argument contract and function signature.
+  unsafe { real_pthread_create(thread, attr, start_routine, arg) }
 }
 
-fn forward_pthread_join(thread: pthread_t, retval: *mut *mut c_void) -> Option<c_int> {
-  let real_join = resolve_real_pthread_join()?;
+fn forward_pthread_detach(thread: pthread_t) -> c_int {
+  let Some(real_pthread_detach) = resolve_real_pthread_detach() else {
+    return ESRCH;
+  };
 
-  // SAFETY: pointer/value contracts are forwarded directly to libc pthread ABI.
-  Some(unsafe { real_join(thread, retval) })
+  // SAFETY: forwarding preserves libc ABI argument contract and function signature.
+  unsafe { real_pthread_detach(thread) }
 }
 
-fn forward_pthread_detach(thread: pthread_t) -> Option<c_int> {
-  let real_detach = resolve_real_pthread_detach()?;
+unsafe fn forward_pthread_join(thread: pthread_t, retval: *mut *mut c_void) -> c_int {
+  let Some(real_pthread_join) = resolve_real_pthread_join() else {
+    return ESRCH;
+  };
 
-  // SAFETY: value contract is forwarded directly to libc pthread ABI.
-  Some(unsafe { real_detach(thread) })
+  // SAFETY: forwarding preserves libc ABI argument contract and function signature.
+  unsafe { real_pthread_join(thread, retval) }
+}
+
+fn spawn_local_thread(
+  thread: *mut pthread_t,
+  start_routine: StartRoutine,
+  arg: *mut c_void,
+) -> c_int {
+  let thread_id = {
+    let mut registry = lock_registry();
+    let thread_id = allocate_thread_id(&registry);
+
+    registry.local_pending.insert(thread_id);
+
+    thread_id
+  };
+  let arg_word = arg as usize;
+  let spawn_result = with_internal_pthread_fallback(|| {
+    thread::Builder::new().spawn(move || {
+      CURRENT_THREAD_ID.with(|slot| slot.set(Some(thread_id)));
+
+      let arg_ptr = arg_word as *mut c_void;
+      // SAFETY: caller validates start-routine pointer/value and forwards `arg` verbatim.
+      let returned = unsafe { start_routine(arg_ptr) };
+
+      CURRENT_THREAD_ID.with(|slot| slot.set(None));
+
+      let mut registry = lock_registry();
+
+      registry.handle_local_thread_exit(thread_id);
+
+      drop(registry);
+
+      returned as usize
+    })
+  });
+  let Ok(join_handle) = spawn_result else {
+    lock_registry().local_pending.remove(&thread_id);
+
+    return EAGAIN;
+  };
+
+  {
+    let mut registry = lock_registry();
+
+    registry.joinable.insert(thread_id, join_handle);
+    registry.local_pending.remove(&thread_id);
+  }
+
+  // SAFETY: `thread` is validated non-null and points to writable memory by callers.
+  unsafe {
+    thread.write(thread_id);
+  }
+
+  0
 }
 
 /// C ABI entry point for `pthread_create`.
@@ -509,8 +707,11 @@ fn forward_pthread_detach(thread: pthread_t) -> Option<c_int> {
 /// Returns:
 /// - `0` on success and writes a thread handle to `thread`
 /// - `EINVAL` when `thread` is null or `start_routine` is null
-/// - native pthread error codes when non-null `attr` is forwarded to libc
-/// - `EAGAIN` when either runtime path fails to spawn a new thread
+/// - zero-initialized non-null attributes are treated as local defaults and
+///   use the local runtime thread path
+/// - native pthread error codes when non-null `attr` forwarding fails in host
+///   libc
+/// - `EAGAIN` when runtime thread creation fails
 ///
 /// # Safety
 /// - `thread` must point to writable storage for one [`pthread_t`].
@@ -524,6 +725,11 @@ pub unsafe extern "C" fn pthread_create(
   start_routine: Option<StartRoutine>,
   arg: *mut c_void,
 ) -> c_int {
+  if should_forward_internal_pthread_call() {
+    // SAFETY: internal runtime fallback forwards the C ABI arguments unchanged.
+    return unsafe { forward_pthread_create(thread, attr, start_routine, arg) };
+  }
+
   if thread.is_null() {
     return EINVAL;
   }
@@ -533,74 +739,31 @@ pub unsafe extern "C" fn pthread_create(
   };
 
   if !attr.is_null() {
-    let mut native_thread = 0 as pthread_t;
-    let Some(forwarded_result) =
-      forward_pthread_create(&raw mut native_thread, attr, Some(start), arg)
-    else {
-      return EAGAIN;
-    };
+    if is_zeroed_attr_payload(attr) {
+      return spawn_local_thread(thread, start, arg);
+    }
 
-    if forwarded_result == 0 {
-      // SAFETY: `thread` is validated non-null and points to writable memory.
-      unsafe {
-        thread.write(native_thread);
-      }
+    // SAFETY: top-level native attribute path forwards libc ABI arguments unchanged.
+    let create_result = unsafe { forward_pthread_create(thread, attr, Some(start), arg) };
 
+    if create_result == 0 {
+      // SAFETY: successful create writes a valid native pthread handle into `thread`.
+      let native_thread = unsafe { thread.read() };
       let mut registry = lock_registry();
 
+      registry.native_joinable.insert(native_thread);
       registry.clear_native_detached(native_thread);
       registry.clear_native_consumed(native_thread);
-      registry.native_joinable.insert(native_thread);
+
+      drop(registry);
+
+      remember_recent_native_create(native_thread);
     }
 
-    return forwarded_result;
+    return create_result;
   }
 
-  let thread_id = {
-    let registry = lock_registry();
-
-    allocate_thread_id(&registry)
-  };
-  let arg_word = arg as usize;
-  let spawn_result = thread::Builder::new().spawn(move || {
-    CURRENT_THREAD_ID.with(|slot| slot.set(Some(thread_id)));
-
-    let arg_ptr = arg_word as *mut c_void;
-    // SAFETY: `pthread_create` validates `start_routine` is present and
-    // forwards `arg` verbatim.
-    let returned = unsafe { start(arg_ptr) };
-
-    CURRENT_THREAD_ID.with(|slot| slot.set(None));
-
-    let mut registry = lock_registry();
-
-    if registry.detached.remove(&thread_id) {
-      // Detached threads are tracked only while they may still be running.
-    } else if registry.joinable.contains_key(&thread_id) {
-      registry.finished.insert(thread_id);
-    }
-
-    drop(registry);
-
-    returned as usize
-  });
-  let Ok(join_handle) = spawn_result else {
-    return EAGAIN;
-  };
-
-  {
-    let mut registry = lock_registry();
-
-    registry.joinable.insert(thread_id, join_handle);
-  }
-
-  // SAFETY: `thread` was validated as non-null and points to writable memory
-  // by this function's contract.
-  unsafe {
-    thread.write(thread_id);
-  }
-
-  0
+  spawn_local_thread(thread, start, arg)
 }
 
 /// C ABI entry point for `pthread_detach`.
@@ -609,22 +772,28 @@ pub unsafe extern "C" fn pthread_create(
 ///
 /// Returns:
 /// - `0` on success
-/// - `EINVAL` when the thread is already detached
+/// - `EINVAL` when the thread is detached and the host runtime still keeps the
+///   detached handle alive
+/// - `ESRCH` when a previously detached native handle has already been released
 /// - `ESRCH` when no known pthread target exists for the handle
 #[unsafe(no_mangle)]
 pub extern "C" fn pthread_detach(thread: pthread_t) -> c_int {
+  if should_forward_internal_pthread_call() {
+    return forward_pthread_detach(thread);
+  }
+
   let detach_target = {
     let mut registry = lock_registry();
 
     if registry.detached.contains(&thread) {
-      return EINVAL;
-    }
+      drop(registry);
 
-    if registry.native_detached.contains(&thread) {
       return EINVAL;
     }
 
     if registry.native_consumed.contains(&thread) {
+      drop(registry);
+
       return ESRCH;
     }
 
@@ -635,30 +804,43 @@ pub extern "C" fn pthread_detach(thread: pthread_t) -> c_int {
         registry.detached.insert(thread);
       }
 
+      drop(registry);
+
       DetachTarget::Local(join_handle)
+    } else if registry.native_detached.contains(&thread) {
+      drop(registry);
+      clear_recent_native_create(thread);
+
+      DetachTarget::NativeDetached
     } else if registry.native_joinable.remove(&thread) {
-      DetachTarget::Native
+      registry.clear_native_detached(thread);
+      drop(registry);
+      clear_recent_native_create(thread);
+
+      DetachTarget::NativeJoinable
     } else {
+      drop(registry);
+      clear_recent_native_create(thread);
+
       DetachTarget::UnknownNative
     }
   };
 
   match detach_target {
     DetachTarget::Local(join_handle) => {
-      drop(join_handle);
+      with_internal_pthread_fallback(|| drop(join_handle));
 
       0
     }
-    DetachTarget::Native => {
-      let detach_result = forward_pthread_detach(thread).unwrap_or(ESRCH);
+    DetachTarget::NativeJoinable => {
+      let detach_result = forward_pthread_detach(thread);
       let mut registry = lock_registry();
 
       registry.handle_forwarded_native_detach_result(thread, detach_result, true)
     }
+    DetachTarget::NativeDetached => EINVAL,
     DetachTarget::UnknownNative => {
-      let mut registry = lock_registry();
-
-      registry.mark_native_consumed(thread);
+      lock_registry().mark_native_consumed(thread);
 
       ESRCH
     }
@@ -673,13 +855,20 @@ pub extern "C" fn pthread_detach(thread: pthread_t) -> c_int {
 /// Returns:
 /// - `0` on success
 /// - `EDEADLK` when joining the current thread
-/// - `EINVAL` when the target was detached
+/// - `EINVAL` when the target is detached and the host runtime still keeps the
+///   detached handle alive
+/// - `ESRCH` when a detached native handle has already been released
 /// - `ESRCH` when no known pthread target exists for the handle
 ///
 /// # Safety
 /// - When non-null, `retval` must point to writable storage for one pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pthread_join(thread: pthread_t, retval: *mut *mut c_void) -> c_int {
+  if should_forward_internal_pthread_call() {
+    // SAFETY: internal runtime fallback forwards the C ABI arguments unchanged.
+    return unsafe { forward_pthread_join(thread, retval) };
+  }
+
   if current_thread_id() == Some(thread) {
     return EDEADLK;
   }
@@ -702,21 +891,32 @@ pub unsafe extern "C" fn pthread_join(thread: pthread_t, retval: *mut *mut c_voi
     if let Some(join_handle) = registry.joinable.remove(&thread) {
       registry.finished.remove(&thread);
 
+      drop(registry);
+
       JoinTarget::Local(join_handle)
     } else if registry.native_detached.contains(&thread) {
       drop(registry);
+      clear_recent_native_create(thread);
 
-      return EINVAL;
+      JoinTarget::NativeDetached
     } else if registry.native_joinable.remove(&thread) {
-      JoinTarget::Native
+      registry.clear_native_detached(thread);
+      drop(registry);
+      clear_recent_native_create(thread);
+
+      JoinTarget::NativeJoinable
     } else {
+      drop(registry);
+      clear_recent_native_create(thread);
+
       JoinTarget::UnknownNative
     }
   };
 
   match join_target {
     JoinTarget::Local(join_handle) => {
-      let Ok(joined) = join_handle.join() else {
+      let joined_result = with_internal_pthread_fallback(|| join_handle.join());
+      let Ok(joined) = joined_result else {
         return EINVAL;
       };
 
@@ -729,16 +929,16 @@ pub unsafe extern "C" fn pthread_join(thread: pthread_t, retval: *mut *mut c_voi
 
       0
     }
-    JoinTarget::Native => {
-      let joined_result = forward_pthread_join(thread, retval).unwrap_or(ESRCH);
+    JoinTarget::NativeJoinable => {
+      // SAFETY: forwarding preserves libc ABI argument contract and function signature.
+      let join_result = unsafe { forward_pthread_join(thread, retval) };
       let mut registry = lock_registry();
 
-      registry.handle_forwarded_native_join_result(thread, joined_result, true)
+      registry.handle_forwarded_native_join_result(thread, join_result, true)
     }
+    JoinTarget::NativeDetached => EINVAL,
     JoinTarget::UnknownNative => {
-      let mut registry = lock_registry();
-
-      registry.mark_native_consumed(thread);
+      lock_registry().mark_native_consumed(thread);
 
       ESRCH
     }
@@ -814,7 +1014,7 @@ unsafe fn mutex_state_from_raw<'a>(
   Ok(unsafe { &*state_ptr })
 }
 
-unsafe fn cond_state_from_raw_or_lazy_init<'a>(
+unsafe fn cond_state_from_raw_or_lazy_init_locked<'a>(
   cond: *mut pthread_cond_t,
 ) -> Result<&'a PthreadCondState, c_int> {
   if cond.is_null() {
@@ -829,21 +1029,10 @@ unsafe fn cond_state_from_raw_or_lazy_init<'a>(
   }
 
   if state_ptr.is_null() {
-    let _init_guard = lock_cond_lazy_init();
-
-    // SAFETY: `cond` remains non-null and points to caller-managed memory.
-    state_ptr = unsafe { (*cond).state };
-
-    if state_ptr == DESTROYED_COND_SENTINEL {
-      return Err(EINVAL);
-    }
-
-    if state_ptr.is_null() {
-      // SAFETY: `cond` remains non-null and points to writable caller storage.
-      unsafe {
-        (*cond).state = Box::into_raw(Box::new(PthreadCondState::new()));
-        state_ptr = (*cond).state;
-      }
+    // SAFETY: callers serialize lazy-init transitions with `lock_cond_lazy_init`.
+    unsafe {
+      (*cond).state = Box::into_raw(Box::new(PthreadCondState::new()));
+      state_ptr = (*cond).state;
     }
   }
 
@@ -976,13 +1165,24 @@ fn mutex_restore_cond_wait_lock_depth(
 fn rwlock_rdlock_internal(rwlock_state: &PthreadRwlockState, try_only: bool) -> c_int {
   let current = thread::current().id();
   let mut lock_state = lock_rwlock_lock_state(rwlock_state);
+  let mut registered_waiter = false;
 
   loop {
     if lock_state.destroyed {
+      if registered_waiter {
+        lock_state.waiting_readers = lock_state.waiting_readers.saturating_sub(1);
+      }
+
       return EINVAL;
     }
 
-    if lock_state.writer_owner.is_none() {
+    if lock_state.writer_owner.is_none()
+      && (lock_state.waiting_writers == 0 || lock_state.reader_owners.contains_key(&current))
+    {
+      if registered_waiter {
+        lock_state.waiting_readers = lock_state.waiting_readers.saturating_sub(1);
+      }
+
       let Some(next_reader_depth) = lock_state
         .reader_owners
         .get(&current)
@@ -1003,11 +1203,20 @@ fn rwlock_rdlock_internal(rwlock_state: &PthreadRwlockState, try_only: bool) -> 
     }
 
     if lock_state.writer_owner == Some(current) {
+      if registered_waiter {
+        lock_state.waiting_readers = lock_state.waiting_readers.saturating_sub(1);
+      }
+
       return if try_only { EBUSY } else { EDEADLK };
     }
 
     if try_only {
       return EBUSY;
+    }
+
+    if !registered_waiter {
+      lock_state.waiting_readers = lock_state.waiting_readers.saturating_add(1);
+      registered_waiter = true;
     }
 
     lock_state = rwlock_state
@@ -1020,17 +1229,30 @@ fn rwlock_rdlock_internal(rwlock_state: &PthreadRwlockState, try_only: bool) -> 
 fn rwlock_wrlock_internal(rwlock_state: &PthreadRwlockState, try_only: bool) -> c_int {
   let current = thread::current().id();
   let mut lock_state = lock_rwlock_lock_state(rwlock_state);
+  let mut registered_waiter = false;
 
   loop {
     if lock_state.destroyed {
+      if registered_waiter {
+        lock_state.waiting_writers = lock_state.waiting_writers.saturating_sub(1);
+      }
+
       return EINVAL;
     }
 
     if lock_state.writer_owner == Some(current) {
+      if registered_waiter {
+        lock_state.waiting_writers = lock_state.waiting_writers.saturating_sub(1);
+      }
+
       return if try_only { EBUSY } else { EDEADLK };
     }
 
     if lock_state.writer_owner.is_none() && lock_state.total_readers == 0 {
+      if registered_waiter {
+        lock_state.waiting_writers = lock_state.waiting_writers.saturating_sub(1);
+      }
+
       lock_state.writer_owner = Some(current);
 
       return 0;
@@ -1038,6 +1260,11 @@ fn rwlock_wrlock_internal(rwlock_state: &PthreadRwlockState, try_only: bool) -> 
 
     if try_only {
       return EBUSY;
+    }
+
+    if !registered_waiter {
+      lock_state.waiting_writers = lock_state.waiting_writers.saturating_add(1);
+      registered_waiter = true;
     }
 
     lock_state = rwlock_state
@@ -1144,7 +1371,11 @@ fn rwlock_mark_destroyed(rwlock_state: &PthreadRwlockState) -> c_int {
     return EINVAL;
   }
 
-  if lock_state.writer_owner.is_some() || lock_state.total_readers != 0 {
+  if lock_state.writer_owner.is_some()
+    || lock_state.total_readers != 0
+    || lock_state.waiting_readers != 0
+    || lock_state.waiting_writers != 0
+  {
     return EBUSY;
   }
 
@@ -1308,11 +1539,8 @@ const fn pthread_mutexattr_getpshared_impl(
 
 /// C ABI entry point for `pthread_mutexattr_setpshared`.
 ///
-/// Supports only `PTHREAD_PROCESS_PRIVATE`.
-///
 /// Returns:
-/// - `0` when setting `PTHREAD_PROCESS_PRIVATE`
-/// - `ENOTSUP` for `PTHREAD_PROCESS_SHARED`
+/// - `0` when setting `PTHREAD_PROCESS_PRIVATE` or `PTHREAD_PROCESS_SHARED`
 /// - `EINVAL` for null/uninitialized attr or invalid `pshared` value
 #[unsafe(no_mangle)]
 pub extern "C" fn pthread_mutexattr_setpshared(
@@ -1333,11 +1561,7 @@ fn pthread_mutexattr_setpshared_impl(attr: *mut pthread_mutexattr_t, pshared: c_
       return EINVAL;
     }
 
-    if pshared == PTHREAD_PROCESS_SHARED {
-      return ENOTSUP;
-    }
-
-    if pshared != PTHREAD_PROCESS_PRIVATE {
+    if pshared != PTHREAD_PROCESS_PRIVATE && pshared != PTHREAD_PROCESS_SHARED {
       return EINVAL;
     }
 
@@ -1354,7 +1578,7 @@ fn pthread_mutexattr_setpshared_impl(attr: *mut pthread_mutexattr_t, pshared: c_
 /// Returns:
 /// - `0` on success
 /// - `EINVAL` for null `mutex`, uninitialized attributes, or invalid types
-/// - `ENOTSUP` when process-shared attributes are requested
+/// - same-process behavior is preserved even when process-shared attributes are requested
 /// - `EBUSY` when `mutex` was already initialized
 #[unsafe(no_mangle)]
 pub extern "C" fn pthread_mutex_init(
@@ -1382,11 +1606,7 @@ fn pthread_mutex_init_impl(mutex: *mut pthread_mutex_t, attr: *const pthread_mut
     (attr_ref.mutex_type, attr_ref.pshared)
   };
 
-  if pshared == PTHREAD_PROCESS_SHARED {
-    return ENOTSUP;
-  }
-
-  if pshared != PTHREAD_PROCESS_PRIVATE {
+  if pshared != PTHREAD_PROCESS_PRIVATE && pshared != PTHREAD_PROCESS_SHARED {
     return EINVAL;
   }
 
@@ -1599,11 +1819,8 @@ const fn pthread_condattr_getpshared_impl(
 
 /// C ABI entry point for `pthread_condattr_setpshared`.
 ///
-/// Supports only `PTHREAD_PROCESS_PRIVATE`.
-///
 /// Returns:
-/// - `0` when setting `PTHREAD_PROCESS_PRIVATE`
-/// - `ENOTSUP` for `PTHREAD_PROCESS_SHARED`
+/// - `0` when setting `PTHREAD_PROCESS_PRIVATE` or `PTHREAD_PROCESS_SHARED`
 /// - `EINVAL` for null/uninitialized attr or invalid `pshared` value
 #[unsafe(no_mangle)]
 pub extern "C" fn pthread_condattr_setpshared(
@@ -1624,11 +1841,7 @@ fn pthread_condattr_setpshared_impl(attr: *mut pthread_condattr_t, pshared: c_in
       return EINVAL;
     }
 
-    if pshared == PTHREAD_PROCESS_SHARED {
-      return ENOTSUP;
-    }
-
-    if pshared != PTHREAD_PROCESS_PRIVATE {
+    if pshared != PTHREAD_PROCESS_PRIVATE && pshared != PTHREAD_PROCESS_SHARED {
       return EINVAL;
     }
 
@@ -1646,7 +1859,7 @@ fn pthread_condattr_setpshared_impl(attr: *mut pthread_condattr_t, pshared: c_in
 /// Returns:
 /// - `0` on success
 /// - `EINVAL` for null/uninitialized arguments
-/// - `ENOTSUP` when process-shared attributes are requested
+/// - same-process behavior is preserved even when process-shared attributes are requested
 /// - `EBUSY` when `cond` was already initialized
 #[unsafe(no_mangle)]
 pub extern "C" fn pthread_cond_init(
@@ -1669,14 +1882,12 @@ fn pthread_cond_init_impl(cond: *mut pthread_cond_t, attr: *const pthread_condat
       return EINVAL;
     }
 
-    if attr_ref.pshared == PTHREAD_PROCESS_SHARED {
-      return ENOTSUP;
-    }
-
-    if attr_ref.pshared != PTHREAD_PROCESS_PRIVATE {
+    if attr_ref.pshared != PTHREAD_PROCESS_PRIVATE && attr_ref.pshared != PTHREAD_PROCESS_SHARED {
       return EINVAL;
     }
   }
+
+  let _init_guard = lock_cond_lazy_init();
 
   // SAFETY: `cond` is validated non-null and points to writable storage.
   unsafe {
@@ -1707,6 +1918,8 @@ fn pthread_cond_destroy_impl(cond: *mut pthread_cond_t) -> c_int {
   if cond.is_null() {
     return EINVAL;
   }
+
+  let _init_guard = lock_cond_lazy_init();
 
   // SAFETY: `cond` is validated non-null and points to caller storage.
   let state_ptr = unsafe { (*cond).state };
@@ -1772,8 +1985,9 @@ pub extern "C" fn pthread_cond_wait(
 }
 
 fn pthread_cond_wait_impl(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t) -> c_int {
+  let init_guard = lock_cond_lazy_init();
   // SAFETY: function validates non-null and initialized state.
-  let Ok(cond_state) = (unsafe { cond_state_from_raw_or_lazy_init(cond) }) else {
+  let Ok(cond_state) = (unsafe { cond_state_from_raw_or_lazy_init_locked(cond) }) else {
     return EINVAL;
   };
   // SAFETY: function validates non-null and initialized state.
@@ -1781,7 +1995,6 @@ fn pthread_cond_wait_impl(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t
     return EINVAL;
   };
   let mut wait_state = lock_cond_wait_state(cond_state);
-  let observed_generation = wait_state.generation;
 
   wait_state.waiter_count = wait_state.waiter_count.saturating_add(1);
 
@@ -1804,10 +2017,13 @@ fn pthread_cond_wait_impl(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t
     return unlock_result;
   }
 
+  drop(init_guard);
+
   wait_state = cond_state
     .wait_cv
-    .wait_while(wait_state, |state| state.generation == observed_generation)
+    .wait_while(wait_state, |state| state.pending_wakeups == 0)
     .unwrap_or_else(PoisonError::into_inner);
+  wait_state.pending_wakeups = wait_state.pending_wakeups.saturating_sub(1);
   wait_state.waiter_count = wait_state.waiter_count.saturating_sub(1);
   drop(wait_state);
 
@@ -1854,8 +2070,9 @@ fn pthread_cond_timedwait_impl(
   let Ok(timeout_duration) = timeout_from_abstime(abstime) else {
     return EINVAL;
   };
+  let init_guard = lock_cond_lazy_init();
   // SAFETY: function validates non-null and initialized state.
-  let Ok(cond_state) = (unsafe { cond_state_from_raw_or_lazy_init(cond) }) else {
+  let Ok(cond_state) = (unsafe { cond_state_from_raw_or_lazy_init_locked(cond) }) else {
     return EINVAL;
   };
   // SAFETY: function validates non-null and initialized state.
@@ -1863,7 +2080,6 @@ fn pthread_cond_timedwait_impl(
     return EINVAL;
   };
   let mut initial_wait_state = lock_cond_wait_state(cond_state);
-  let observed_generation = initial_wait_state.generation;
 
   initial_wait_state.waiter_count = initial_wait_state.waiter_count.saturating_add(1);
 
@@ -1886,17 +2102,24 @@ fn pthread_cond_timedwait_impl(
     return unlock_result;
   }
 
+  drop(init_guard);
+
   let timeout_result;
 
   (initial_wait_state, timeout_result) = cond_state
     .wait_cv
     .wait_timeout_while(initial_wait_state, timeout_duration, |state| {
-      state.generation == observed_generation
+      state.pending_wakeups == 0
     })
     .unwrap_or_else(PoisonError::into_inner);
 
-  let timed_out =
-    timeout_result.timed_out() && initial_wait_state.generation == observed_generation;
+  let woke_from_signal = initial_wait_state.pending_wakeups != 0;
+
+  if woke_from_signal {
+    initial_wait_state.pending_wakeups = initial_wait_state.pending_wakeups.saturating_sub(1);
+  }
+
+  let timed_out = timeout_result.timed_out() && !woke_from_signal;
 
   initial_wait_state.waiter_count = initial_wait_state.waiter_count.saturating_sub(1);
   drop(initial_wait_state);
@@ -1932,6 +2155,8 @@ fn pthread_cond_signal_impl(cond: *mut pthread_cond_t) -> c_int {
     return EINVAL;
   }
 
+  let _init_guard = lock_cond_lazy_init();
+
   // SAFETY: `cond` is validated non-null and points to caller storage.
   let state_ptr = unsafe { (*cond).state };
 
@@ -1951,7 +2176,10 @@ fn pthread_cond_signal_impl(cond: *mut pthread_cond_t) -> c_int {
     if wait_state.waiter_count == 0 {
       false
     } else {
-      wait_state.generation = wait_state.generation.wrapping_add(1);
+      wait_state.pending_wakeups = wait_state
+        .pending_wakeups
+        .saturating_add(1)
+        .min(wait_state.waiter_count);
 
       true
     }
@@ -1980,6 +2208,8 @@ fn pthread_cond_broadcast_impl(cond: *mut pthread_cond_t) -> c_int {
     return EINVAL;
   }
 
+  let _init_guard = lock_cond_lazy_init();
+
   // SAFETY: `cond` is validated non-null and points to caller storage.
   let state_ptr = unsafe { (*cond).state };
 
@@ -1999,7 +2229,7 @@ fn pthread_cond_broadcast_impl(cond: *mut pthread_cond_t) -> c_int {
     if wait_state.waiter_count == 0 {
       false
     } else {
-      wait_state.generation = wait_state.generation.wrapping_add(1);
+      wait_state.pending_wakeups = wait_state.waiter_count;
 
       true
     }
@@ -2053,7 +2283,8 @@ pub unsafe extern "C" fn pthread_rwlock_init(
 /// Returns:
 /// - `0` on success
 /// - `EINVAL` when `rwlock` is null/uninitialized
-/// - `EBUSY` when lock is currently held by reader/writer threads
+/// - `EBUSY` when lock is currently held by reader/writer threads or still has
+///   blocked waiters
 ///
 /// # Safety
 /// - `rwlock` must point to storage for one [`pthread_rwlock_t`].
@@ -2191,9 +2422,14 @@ pub unsafe extern "C" fn pthread_rwlock_unlock(rwlock: *mut pthread_rwlock_t) ->
 mod tests {
   use super::{
     NATIVE_CONSUMED_CACHE_LIMIT, NATIVE_DETACHED_CACHE_LIMIT, NEXT_THREAD_ID, Ordering,
-    PthreadRegistry, allocate_thread_id, pthread_t,
+    PthreadCondState, PthreadRegistry, PthreadRwlockState, allocate_thread_id, lock_cond_lazy_init,
+    lock_cond_wait_state, lock_rwlock_lock_state, pthread_cond_signal, pthread_cond_t, pthread_t,
+    rwlock_mark_destroyed, rwlock_rdlock_internal,
   };
-  use crate::abi::errno::{EINVAL, ESRCH};
+  use crate::abi::errno::{EBUSY, EINVAL, ESRCH};
+  use std::sync::mpsc;
+  use std::thread;
+  use std::time::Duration;
 
   #[test]
   fn mark_native_detached_removes_joinable_state() {
@@ -2326,6 +2562,64 @@ mod tests {
   }
 
   #[test]
+  fn allocate_thread_id_skips_local_pending_candidate() {
+    let mut registry = PthreadRegistry::default();
+    let first_raw = NEXT_THREAD_ID.load(Ordering::Relaxed);
+    let first_candidate = pthread_t::try_from(first_raw)
+      .unwrap_or_else(|_| unreachable!("u64 must fit into pthread_t"));
+
+    registry.local_pending.insert(first_candidate);
+
+    let allocated = allocate_thread_id(&registry);
+
+    assert_ne!(
+      allocated, first_candidate,
+      "allocator must not hand out handles still pending local publication",
+    );
+  }
+
+  #[test]
+  fn local_pending_thread_exit_marks_finished() {
+    let mut registry = PthreadRegistry::default();
+    let thread = 46 as pthread_t;
+
+    registry.local_pending.insert(thread);
+    registry.handle_local_thread_exit(thread);
+
+    assert!(
+      registry.finished.contains(&thread),
+      "local thread exits that win the publication race must still be marked finished",
+    );
+  }
+
+  #[test]
+  fn detaching_finished_local_thread_does_not_leave_detached_state() {
+    let mut registry = PthreadRegistry::default();
+    let thread = 47 as pthread_t;
+    let join_handle = thread::spawn(|| 0_usize);
+
+    registry.local_pending.insert(thread);
+    registry.handle_local_thread_exit(thread);
+    registry.joinable.insert(thread, join_handle);
+    registry.local_pending.remove(&thread);
+
+    let join_handle = registry
+      .joinable
+      .remove(&thread)
+      .unwrap_or_else(|| unreachable!("test published join handle"));
+    let was_finished = registry.finished.remove(&thread);
+
+    if !was_finished {
+      registry.detached.insert(thread);
+    }
+
+    drop(join_handle);
+
+    assert!(!registry.detached.contains(&thread));
+    assert!(!registry.finished.contains(&thread));
+  }
+
+  #[test]
   fn forwarded_native_detach_einval_marks_detached_state() {
     let mut registry = PthreadRegistry::default();
     let thread = 51 as pthread_t;
@@ -2375,5 +2669,133 @@ mod tests {
     assert!(!registry.native_joinable.contains(&thread));
     assert!(registry.native_detached.contains(&thread));
     assert!(!registry.native_consumed.contains(&thread));
+  }
+
+  #[test]
+  fn forwarded_detached_native_join_success_keeps_detached_state() {
+    let mut registry = PthreadRegistry::default();
+    let thread = 82 as pthread_t;
+
+    registry.native_detached.insert(thread);
+
+    let join_result = registry.handle_forwarded_native_join_result(thread, 0, false);
+
+    assert_eq!(join_result, 0);
+    assert!(registry.native_detached.contains(&thread));
+    assert!(!registry.native_consumed.contains(&thread));
+  }
+
+  #[test]
+  fn pthread_cond_signal_waits_for_zero_init_waiter_registration() {
+    let mut cond = pthread_cond_t::default();
+    let init_guard = lock_cond_lazy_init();
+    let state_ptr = Box::into_raw(Box::new(PthreadCondState::new()));
+
+    // This simulates a zero-init waiter publishing cond state before
+    // waiter-count registration while the lazy-init lock is held.
+    cond.state = state_ptr;
+
+    let cond_addr = (&raw mut cond).addr();
+    let (signal_result_tx, signal_result_rx) = mpsc::channel();
+    let signaler = thread::spawn(move || {
+      let cond_ptr = cond_addr as *mut pthread_cond_t;
+      let signal_result = pthread_cond_signal(cond_ptr);
+
+      signal_result_tx
+        .send(signal_result)
+        .expect("failed to send pthread_cond_signal result");
+    });
+
+    assert!(
+      signal_result_rx
+        .recv_timeout(Duration::from_millis(50))
+        .is_err(),
+      "signal must not run past lazy-init waiter registration",
+    );
+
+    let cond_state = unsafe { &*state_ptr };
+    let mut wait_state = lock_cond_wait_state(cond_state);
+
+    wait_state.waiter_count = 1;
+    drop(wait_state);
+    drop(init_guard);
+
+    assert_eq!(
+      signal_result_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("signal should complete after waiter registration"),
+      0
+    );
+    signaler.join().expect("signaler thread panicked");
+
+    let wait_state = lock_cond_wait_state(cond_state);
+
+    assert_eq!(wait_state.pending_wakeups, 1);
+    drop(wait_state);
+
+    // SAFETY: test-created state is reclaimed exactly once here.
+    unsafe { drop(Box::from_raw(state_ptr)) };
+  }
+
+  #[test]
+  fn pthread_rwlock_tryrdlock_returns_ebusy_while_writer_waits() {
+    let rwlock_state = PthreadRwlockState::new();
+    let mut lock_state = lock_rwlock_lock_state(&rwlock_state);
+
+    lock_state.waiting_writers = 1;
+    drop(lock_state);
+
+    assert_eq!(rwlock_rdlock_internal(&rwlock_state, true), EBUSY);
+  }
+
+  #[test]
+  fn pthread_rwlock_recursive_reader_reentry_ignores_waiting_writer() {
+    let rwlock_state = PthreadRwlockState::new();
+    let current = thread::current().id();
+    let mut lock_state = lock_rwlock_lock_state(&rwlock_state);
+
+    lock_state.reader_owners.insert(current, 1);
+    lock_state.total_readers = 1;
+    lock_state.waiting_writers = 1;
+    drop(lock_state);
+
+    assert_eq!(rwlock_rdlock_internal(&rwlock_state, true), 0);
+
+    let lock_state = lock_rwlock_lock_state(&rwlock_state);
+
+    assert_eq!(lock_state.reader_owners.get(&current).copied(), Some(2));
+    assert_eq!(lock_state.total_readers, 2);
+
+    drop(lock_state);
+  }
+
+  #[test]
+  fn pthread_rwlock_destroy_returns_ebusy_while_reader_waits() {
+    let rwlock_state = PthreadRwlockState::new();
+    let mut lock_state = lock_rwlock_lock_state(&rwlock_state);
+
+    lock_state.waiting_readers = 1;
+    drop(lock_state);
+
+    assert_eq!(rwlock_mark_destroyed(&rwlock_state), EBUSY);
+    assert!(
+      !lock_rwlock_lock_state(&rwlock_state).destroyed,
+      "destroy must not flip state while reader waiters are still queued",
+    );
+  }
+
+  #[test]
+  fn pthread_rwlock_destroy_returns_ebusy_while_writer_waits() {
+    let rwlock_state = PthreadRwlockState::new();
+    let mut lock_state = lock_rwlock_lock_state(&rwlock_state);
+
+    lock_state.waiting_writers = 1;
+    drop(lock_state);
+
+    assert_eq!(rwlock_mark_destroyed(&rwlock_state), EBUSY);
+    assert!(
+      !lock_rwlock_lock_state(&rwlock_state).destroyed,
+      "destroy must not flip state while writer waiters are still queued",
+    );
   }
 }

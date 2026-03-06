@@ -2,7 +2,7 @@
 
 use core::ffi::{c_char, c_void};
 use rlibc::abi::errno::{EFAULT, EINVAL, ENAMETOOLONG};
-use rlibc::abi::types::{c_int, c_long, size_t};
+use rlibc::abi::types::{c_int, c_long, c_ulong, size_t};
 use rlibc::resource::{RLIM_INFINITY, RLIMIT_NOFILE, RLimit, getrlimit, setrlimit};
 use rlibc::system::{
   _SC_CLK_TCK, _SC_NPROCESSORS_CONF, _SC_NPROCESSORS_ONLN, _SC_OPEN_MAX, _SC_PAGE_SIZE,
@@ -21,9 +21,11 @@ const ERRNO_SENTINEL: c_int = 777;
 const CPU_POSSIBLE_PATH: &str = "/sys/devices/system/cpu/possible";
 const CPU_PRESENT_PATH: &str = "/sys/devices/system/cpu/present";
 const AFFINITY_MASK_BYTES: usize = 128;
+const AT_PAGESZ: c_ulong = 6;
 
 unsafe extern "C" {
   fn __errno_location() -> *mut c_int;
+  fn getauxval(kind: c_ulong) -> c_ulong;
   fn sched_getaffinity(pid: c_int, cpusetsize: usize, mask: *mut c_void) -> c_int;
 }
 
@@ -152,6 +154,20 @@ fn parsed_cpu_count_from_sysfs(path: &str) -> Option<c_long> {
   c_long::try_from(parsed_count).ok()
 }
 
+fn host_auxv_page_size() -> Option<c_long> {
+  let saved_errno = read_errno();
+  // SAFETY: `getauxval` reads this process auxiliary vector for the requested key.
+  let value = unsafe { getauxval(AT_PAGESZ) };
+
+  set_errno(saved_errno);
+
+  if value == 0 {
+    return None;
+  }
+
+  c_long::try_from(value).ok()
+}
+
 #[test]
 fn sysconf_selector_constants_match_linux_x86_64_values() {
   assert_eq!(_SC_CLK_TCK, EXPECTED_SC_CLK_TCK);
@@ -207,6 +223,28 @@ fn sysconf_page_size_alias_matches_getpagesize() {
     read_errno(),
     ERRNO_SENTINEL,
     "successful sysconf alias query must not clobber errno",
+  );
+}
+
+#[test]
+fn sysconf_pagesize_and_getpagesize_match_auxv_page_size_when_available() {
+  let Some(host_page_size) = host_auxv_page_size() else {
+    return;
+  };
+
+  set_errno(ERRNO_SENTINEL);
+
+  let primary_pagesize = query(_SC_PAGESIZE);
+  let alias_pagesize = query(_SC_PAGE_SIZE);
+  let getpagesize_value = c_long::from(getpagesize());
+
+  assert_eq!(primary_pagesize, host_page_size);
+  assert_eq!(alias_pagesize, host_page_size);
+  assert_eq!(getpagesize_value, host_page_size);
+  assert_eq!(
+    read_errno(),
+    ERRNO_SENTINEL,
+    "successful page-size queries must preserve errno while matching auxv",
   );
 }
 

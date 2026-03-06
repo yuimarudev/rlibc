@@ -2054,6 +2054,7 @@ fn mktime_min_negative_tm_isdst_tm_year_minimum_path_keeps_errno_thread_local_ac
     write_errno(791);
     // SAFETY: pointer is valid for the duration of the call.
     let unknown_result = unsafe { mktime(&raw mut unknown) };
+
     assert_ne!(unknown_result, -1);
     assert_eq!(read_errno(), 791);
 
@@ -2105,6 +2106,7 @@ fn mktime_min_negative_tm_isdst_matches_minus_one_for_month_borrow_boundary_at_t
   let min_negative_errno = read_errno();
 
   assert_eq!(min_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(min_negative_errno, ERANGE);
@@ -2166,6 +2168,7 @@ fn mktime_min_negative_tm_isdst_month_borrow_boundary_keeps_errno_thread_local_a
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -2199,6 +2202,7 @@ fn mktime_min_negative_tm_isdst_month_borrow_boundary_keeps_errno_thread_local_a
   } else {
     assert_eq!(child_errno, 800);
   }
+
   assert_eq!(read_errno(), 979);
 }
 
@@ -2234,6 +2238,7 @@ fn mktime_min_negative_tm_isdst_matches_minus_one_for_day_borrow_boundary_at_tm_
   let min_negative_errno = read_errno();
 
   assert_eq!(min_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(min_negative_errno, ERANGE);
@@ -2295,6 +2300,7 @@ fn mktime_min_negative_tm_isdst_day_borrow_boundary_keeps_errno_thread_local_acr
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -2328,6 +2334,7 @@ fn mktime_min_negative_tm_isdst_day_borrow_boundary_keeps_errno_thread_local_acr
   } else {
     assert_eq!(child_errno, 810);
   }
+
   assert_eq!(read_errno(), 983);
 }
 
@@ -2397,6 +2404,7 @@ fn mktime_min_negative_tm_isdst_tm_year_maximum_path_keeps_errno_thread_local_ac
     write_errno(793);
     // SAFETY: pointer is valid for the duration of the call.
     let unknown_result = unsafe { mktime(&raw mut unknown) };
+
     assert_ne!(unknown_result, -1);
     assert_eq!(read_errno(), 793);
 
@@ -2448,6 +2456,7 @@ fn mktime_min_negative_tm_isdst_matches_minus_one_for_day_carry_boundary_at_tm_y
   let min_negative_errno = read_errno();
 
   assert_eq!(min_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(min_negative_errno, ERANGE);
@@ -2509,6 +2518,7 @@ fn mktime_min_negative_tm_isdst_day_carry_boundary_keeps_errno_thread_local_acro
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -2542,6 +2552,7 @@ fn mktime_min_negative_tm_isdst_day_carry_boundary_keeps_errno_thread_local_acro
   } else {
     assert_eq!(child_errno, 796);
   }
+
   assert_eq!(read_errno(), 977);
 }
 
@@ -2577,6 +2588,7 @@ fn mktime_min_negative_tm_isdst_matches_minus_one_for_month_carry_boundary_at_tm
   let min_negative_errno = read_errno();
 
   assert_eq!(min_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(min_negative_errno, ERANGE);
@@ -2638,6 +2650,7 @@ fn mktime_min_negative_tm_isdst_month_carry_boundary_keeps_errno_thread_local_ac
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -2671,6 +2684,7 @@ fn mktime_min_negative_tm_isdst_month_carry_boundary_keeps_errno_thread_local_ac
   } else {
     assert_eq!(child_errno, 798);
   }
+
   assert_eq!(read_errno(), 978);
 }
 
@@ -2905,6 +2919,7 @@ fn mktime_large_negative_tm_isdst_tm_year_minimum_path_keeps_errno_thread_local_
     write_errno(789);
     // SAFETY: pointer is valid for the duration of the call.
     let unknown_result = unsafe { mktime(&raw mut unknown) };
+
     assert_ne!(unknown_result, -1);
     assert_eq!(read_errno(), 789);
 
@@ -2956,6 +2971,7 @@ fn mktime_large_negative_tm_isdst_matches_minus_one_for_day_carry_boundary_at_tm
   let large_negative_errno = read_errno();
 
   assert_eq!(large_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(large_negative_errno, ERANGE);
@@ -3017,6 +3033,7 @@ fn mktime_large_negative_tm_isdst_day_carry_boundary_keeps_errno_thread_local_ac
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -3050,6 +3067,7 @@ fn mktime_large_negative_tm_isdst_day_carry_boundary_keeps_errno_thread_local_ac
   } else {
     assert_eq!(child_errno, 792);
   }
+
   assert_eq!(read_errno(), 976);
 }
 
@@ -3085,6 +3103,7 @@ fn mktime_large_negative_tm_isdst_matches_minus_one_for_day_borrow_boundary_at_t
   let large_negative_errno = read_errno();
 
   assert_eq!(large_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(large_negative_errno, ERANGE);
@@ -3146,6 +3165,7 @@ fn mktime_large_negative_tm_isdst_day_borrow_boundary_keeps_errno_thread_local_a
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -3179,6 +3199,7 @@ fn mktime_large_negative_tm_isdst_day_borrow_boundary_keeps_errno_thread_local_a
   } else {
     assert_eq!(child_errno, 808);
   }
+
   assert_eq!(read_errno(), 982);
 }
 
@@ -3214,6 +3235,7 @@ fn mktime_large_negative_tm_isdst_matches_minus_one_for_month_borrow_boundary_at
   let large_negative_errno = read_errno();
 
   assert_eq!(large_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(large_negative_errno, ERANGE);
@@ -3275,6 +3297,7 @@ fn mktime_large_negative_tm_isdst_month_borrow_boundary_keeps_errno_thread_local
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -3308,6 +3331,7 @@ fn mktime_large_negative_tm_isdst_month_borrow_boundary_keeps_errno_thread_local
   } else {
     assert_eq!(child_errno, 806);
   }
+
   assert_eq!(read_errno(), 981);
 }
 
@@ -3343,6 +3367,7 @@ fn mktime_large_negative_tm_isdst_matches_minus_one_for_month_carry_boundary_at_
   let large_negative_errno = read_errno();
 
   assert_eq!(large_negative_result, unknown_result);
+
   if unknown_result == -1 {
     assert_eq!(unknown_errno, ERANGE);
     assert_eq!(large_negative_errno, ERANGE);
@@ -3404,6 +3429,7 @@ fn mktime_large_negative_tm_isdst_month_carry_boundary_keeps_errno_thread_local_
     let result_errno = read_errno();
 
     assert_eq!(result, unknown_result);
+
     if unknown_result == -1 {
       assert_eq!(unknown_errno, ERANGE);
       assert_eq!(result_errno, ERANGE);
@@ -3437,6 +3463,7 @@ fn mktime_large_negative_tm_isdst_month_carry_boundary_keeps_errno_thread_local_
   } else {
     assert_eq!(child_errno, 802);
   }
+
   assert_eq!(read_errno(), 980);
 }
 
@@ -4330,6 +4357,7 @@ fn mktime_max_positive_tm_isdst_hint_month_borrow_recovery_path_keeps_errno_thre
 
     // SAFETY: pointer is valid for the duration of the call.
     let unknown_result = unsafe { mktime(&raw mut unknown) };
+
     assert_ne!(unknown_result, -1);
     assert_eq!(read_errno(), 807);
 
